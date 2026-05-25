@@ -3,6 +3,7 @@
 
 МОДЕЛЬ СОЗДАНА В ЦЕЛЯХ ОБУЧЕНИЯ, 729м параметров. 
 Опробовать можно по ссылке - https://moonai-psi.vercel.app.
+
 важно! Сейчас находится на этапе претрейна, не знает что она - чат бот.
 This template should help get you started developing with Tauri, React and Typescript in Vite.
 
