@@ -529,7 +529,7 @@ function makeSession(id: string): ChatSession {
 // ─── Notifications ────────────────────────────────────────────────────────────
 // Uses Web Notifications API (works in Tauri WebView natively).
 // If @tauri-apps/plugin-notification is installed later, swap this out.
-async function sendAppNotification(title: string, body: string) {
+/*async function sendAppNotification(title: string, body: string) {
   try {
     if (!("Notification" in window)) return;
     if (Notification.permission === "granted") {
@@ -541,7 +541,7 @@ async function sendAppNotification(title: string, body: string) {
   } catch {
     // Silently fail in environments that block notifications
   }
-}
+}*/
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
