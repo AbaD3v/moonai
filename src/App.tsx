@@ -718,7 +718,11 @@ export default function App() {
       const res = await fetch(`${API_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, max_tokens: 500, temperature: 0.7 }), // Передаем параметры инференса
+        body: JSON.stringify({
+        text,
+        max_tokens: 200,
+        temperature: 0.35
+        }),
         signal: abort.signal,
       });
 
