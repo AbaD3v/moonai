@@ -151,8 +151,9 @@ function CodeBlock({ lang, value }: { lang: string; value: string }) {
 
 function SimpleMarkdown({ content }: { content: string }) {
   const parts = useMemo(() => {
-    // Поддерживает ```python, ```tsx id="...", ```bash и другие fence-заголовки.
-    const codeRe = /```([^\n`]*)\n([\s\S]*?)```/g;
+    // Поддерживает ```python, ```tsx id="...", ```bash и другие fence-заголовки,
+    // а также [code=lang]...[/code] и [code]...[/code]
+    const codeRe = /```([^\n`]*)\n([\s\S]*?)```|\[code(?:=([^\]]*))?]([\s\S]*?)\[\/code\]/g;
     const out: Array<{ type: "text" | "code"; value: string; lang?: string }> = [];
     let last = 0;
     let m: RegExpExecArray | null;
@@ -162,15 +163,25 @@ function SimpleMarkdown({ content }: { content: string }) {
         out.push({ type: "text", value: content.slice(last, m.index) });
       }
 
-      const rawLang = (m[1] || "text").trim();
-      const lang = rawLang.split(/\s+/)[0] || "text";
+      let lang: string;
+      let value: string;
 
-      out.push({
-        type: "code",
-        lang,
-        value: m[2].trim(),
-      });
+      if (m[0].startsWith("```")) {
+        // ```lang\n...\n```
+        const rawLang = (m[1] || "text").trim();
+        lang = rawLang.split(/\s+/)[0] || "text";
+        value = m[2].trim();
+      } else if (m[0].startsWith("[code")) {
+        // [code] или [code=python]
+        lang = (m[3] || "text").trim() || "text";
+        value = m[4].trim();
+      } else {
+        // Fallback for other patterns
+        lang = "text";
+        value = "";
+      }
 
+      out.push({ type: "code", lang, value });
       last = codeRe.lastIndex;
     }
 
@@ -183,8 +194,26 @@ function SimpleMarkdown({ content }: { content: string }) {
 
   const formatInline = useCallback((text: string) => {
     const safe = escapeHtml(text);
-    const bold = safe.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
-    return bold.replace(/`([^`]+)`/g, '<code class="moon-inline-code">$1</code>');
+    return safe
+      // Markdown bold **text** и BB-code [b]text[/b]
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\[b\](.*?)\[\/b\]/gi, "<strong>$1</strong>")
+      // Markdown italic *text* / _text_ и BB-code [i]
+      .replace(/(?<!\*)\*((?!\*)[^\*\n]+?)\*(?!\*)/g, "<em>$1</em>")
+      .replace(/_((?!_)[^_\n]+?)_/g, "<em>$1</em>")
+      .replace(/\[i\](.*?)\[\/i\]/gi, "<em>$1</em>")
+      // Strikethrough [s]text[/s]
+      .replace(/\[s\](.*?)\[\/s\]/gi, "<del>$1</del>")
+      // Underline [u]text[/u]
+      .replace(/\[u\](.*?)\[\/u\]/gi, '<u>$1</u>')
+      // Inline code: backtick и [code] без переносов строк
+      .replace(/`([^`\n]+)`/g, '<code class="moon-inline-code">$1</code>')
+      .replace(/\[code\](.*?)\[\/code\]/gi, '<code class="moon-inline-code">$1</code>')
+      // BB-code [color=red]text[/color]
+      .replace(/\[color=([^\]]+)\](.*?)\[\/color\]/gi, '<span style="color: $1">$2</span>')
+      // BB-code [url=...]text[/url] и [url]...[/url]
+      .replace(/\[url=([^\]]+)\](.*?)\[\/url\]/gi, '<a class="moon-link" href="$1" target="_blank" rel="noopener noreferrer">$2</a>')
+      .replace(/\[url\](.*?)\[\/url\]/gi, '<a class="moon-link" href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
   }, []);
 
   const isTableSeparator = (line: string) =>
@@ -1675,6 +1704,14 @@ const CSS = `
     border-radius: 5px; padding: 1px 6px;
     font-family: var(--font-mono); font-size: 12.5px;
   }
+  .moon-link {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    transition: color var(--transition);
+    cursor: pointer;
+  }
+  .moon-link:hover { color: var(--accent-hover); }
   .moon-hr {
     border: none;
     border-top: 1px solid var(--border);
