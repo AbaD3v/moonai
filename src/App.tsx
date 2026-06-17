@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowUp, Bot, User, Sparkles, PanelLeft, Plus,
-  Copy, Check, Mic, Sun, Moon, Zap, Upload,
+  ArrowUp, Bot, User, PanelLeft, Plus,
+  Copy, Check, Mic, Sun, Moon, Zap, Upload, RotateCcw, Pencil,
   FileText, X, ChevronDown, CircleStop, Trash2, ChevronRight
 } from "lucide-react";
+import moonLogoUrl from "./assets/MoonAILogo.png";
+import moonLogoLightUrl from "./assets/MoonAILogoWhite.png";
 
 // ─── SpeechRecognition types ──────────────────────────────────────────────────
 interface ISpeechRecognitionResult {
@@ -79,7 +81,7 @@ const MODELS: ModelDef[] = [
   {
     id: "moonai-700m-v1",
     name: "MoonAI-v1",
-    tag: "v1 · stable",
+    tag: "v1 · base",
     endpoint: "/chat_v1",
     description: "Стабильная версия",
     color: "#a78bfa",
@@ -643,11 +645,13 @@ export default function App() {
   const [sidebarOverlay, setSidebarOverlay] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [pendingClearOpen, setPendingClearOpen] = useState(false);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
   const scrollRef    = useRef<HTMLDivElement>(null);
   const textareaRef  = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<ISpeechRecognition | null>(null);
   const abortRef     = useRef<AbortController | null>(null);
+  const messageCopyResetRef = useRef<number | null>(null);
   const backendState = backendLabels[backendStatus];
 
   // Mobile sidebar overlay detection
@@ -661,6 +665,10 @@ export default function App() {
   useEffect(() => { saveSessions(sessions); }, [sessions]);
   useEffect(() => { localStorage.setItem(THEME_KEY, theme); }, [theme]);
   useEffect(() => { localStorage.setItem(MODEL_KEY, selectedModel); }, [selectedModel]);
+
+  useEffect(() => () => {
+    if (messageCopyResetRef.current) window.clearTimeout(messageCopyResetRef.current);
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -733,41 +741,39 @@ export default function App() {
     setIsTyping(false);
   }, []);
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
-    if (!text || isTyping) return;
+  const generateBotReply = useCallback(async (
+    sessionId: string,
+    text: string,
+    modelId: string,
+    insertAfterId?: string,
+  ) => {
+    const model = MODELS.find(m => m.id === modelId) ?? MODELS[0];
+    setIsTyping(true);
+    setUserScrolled(false);
 
-    const sessionId = activeId;
-    const model = MODELS.find(m => m.id === selectedModel) ?? MODELS[0];
-
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      text,
-      sender: "user",
+    const msgId = Date.now().toString() + "_bot";
+    const botMsg: Message = {
+      id: msgId,
+      text: "",
+      sender: "bot",
       timestamp: Date.now(),
-      files: pendingFiles.length ? pendingFiles : undefined,
+      modelId: model.id,
     };
 
     setSessions(prev => prev.map(s => {
       if (s.id !== sessionId) return s;
-      const title = s.title === NEW_CHAT_TITLE
-        ? (text.length > 30 ? text.slice(0, 30) + "…" : text)
-        : s.title;
-      return { ...s, title, messages: [...s.messages, userMsg], lastActive: Date.now() };
+      const insertIndex = insertAfterId
+        ? s.messages.findIndex(m => m.id === insertAfterId)
+        : -1;
+      const nextMessages = insertIndex >= 0
+        ? [
+            ...s.messages.slice(0, insertIndex + 1),
+            botMsg,
+            ...s.messages.slice(insertIndex + 1),
+          ]
+        : [...s.messages, botMsg];
+      return { ...s, messages: nextMessages, lastActive: Date.now() };
     }));
-
-    setInput("");
-    setPendingFiles([]);
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
-    setUserScrolled(false);
-    setIsTyping(true);
-
-    const msgId = Date.now().toString() + "_bot";
-    setSessions(prev => prev.map(s =>
-      s.id === sessionId
-        ? { ...s, messages: [...s.messages, { id: msgId, text: "", sender: "bot", timestamp: Date.now(), modelId: model.id }] }
-        : s
-    ));
 
     const abort = new AbortController();
     abortRef.current = abort;
@@ -847,7 +853,93 @@ export default function App() {
       setIsTyping(false);
       abortRef.current = null;
     }
-  }, [input, isTyping, activeId, pendingFiles, selectedModel]);
+  }, []);
+
+  const handleSend = useCallback(async () => {
+    const text = input.trim();
+    if (!text || isTyping) return;
+
+    const sessionId = activeId;
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      text,
+      sender: "user",
+      timestamp: Date.now(),
+      files: pendingFiles.length ? pendingFiles : undefined,
+    };
+
+    setSessions(prev => prev.map(s => {
+      if (s.id !== sessionId) return s;
+      const title = s.title === NEW_CHAT_TITLE
+        ? (text.length > 30 ? text.slice(0, 30) + "…" : text)
+        : s.title;
+      return { ...s, title, messages: [...s.messages, userMsg], lastActive: Date.now() };
+    }));
+
+    setInput("");
+    setPendingFiles([]);
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
+
+    await generateBotReply(sessionId, text, selectedModel, userMsg.id);
+  }, [input, isTyping, activeId, pendingFiles, selectedModel, generateBotReply]);
+
+  const handleCopyMessage = useCallback(async (msg: Message) => {
+    setCopiedMessageId(msg.id);
+    if (messageCopyResetRef.current) window.clearTimeout(messageCopyResetRef.current);
+    messageCopyResetRef.current = window.setTimeout(() => setCopiedMessageId(null), 1800);
+
+    try {
+      await copyToClipboard(msg.text);
+    } catch {
+      messageCopyResetRef.current = window.setTimeout(() => setCopiedMessageId(null), 700);
+    }
+  }, []);
+
+  const handleDeleteMessage = useCallback((messageId: string) => {
+    const latestMessage = messages[messages.length - 1];
+    if (isTyping && latestMessage?.id === messageId) handleStop();
+
+    setSessions(prev => prev.map(s =>
+      s.id === activeId
+        ? { ...s, messages: s.messages.filter(m => m.id !== messageId), lastActive: Date.now() }
+        : s
+    ));
+  }, [activeId, handleStop, isTyping, messages]);
+
+  const handleEditMessage = useCallback((msg: Message) => {
+    if (isTyping) return;
+    setInput(msg.text);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    });
+  }, [isTyping]);
+
+  const handleRegenerateMessage = useCallback((botMsg: Message) => {
+    if (isTyping) return;
+    const session = sessions.find(s => s.id === activeId);
+    if (!session) return;
+
+    const botIndex = session.messages.findIndex(m => m.id === botMsg.id);
+    if (botIndex < 0) return;
+
+    const promptMsg = [...session.messages.slice(0, botIndex)]
+      .reverse()
+      .find(m => m.sender === "user");
+    if (!promptMsg) return;
+
+    setSessions(prev => prev.map(s =>
+      s.id === activeId
+        ? { ...s, messages: s.messages.filter(m => m.id !== botMsg.id), lastActive: Date.now() }
+        : s
+    ));
+
+    void generateBotReply(activeId, promptMsg.text, botMsg.modelId ?? selectedModel, promptMsg.id);
+  }, [activeId, generateBotReply, isTyping, selectedModel, sessions]);
 
   const toggleVoice = useCallback(() => {
     if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) return;
@@ -868,6 +960,7 @@ export default function App() {
   }, [isListening]);
 
   const currentModel = MODELS.find(m => m.id === selectedModel) ?? MODELS[0];
+  const currentLogoUrl = theme === "light" ? moonLogoLightUrl : moonLogoUrl;
   const sidebarBody = (
     <motion.div
       className="moon-sidebar-inner"
@@ -877,7 +970,9 @@ export default function App() {
     >
       <div className="moon-sidebar-top">
         <div className="moon-sidebar-brand">
-          <div className="moon-sidebar-logo"><Sparkles size={14} /></div>
+          <div className="moon-sidebar-logo">
+            <img src={currentLogoUrl} alt="" className="moon-brand-img" />
+          </div>
           <span>MoonAI</span>
         </div>
         <button className="moon-new-chat" onClick={newChat}>
@@ -926,7 +1021,9 @@ export default function App() {
         title="Показать панель"
         aria-label="Показать панель"
       >
-        <span className="moon-logo-toggle-idle"><Sparkles size={15} /></span>
+        <span className="moon-logo-toggle-idle">
+          <img src={currentLogoUrl} alt="" className="moon-brand-img" />
+        </span>
         <span className="moon-logo-toggle-hover"><PanelLeft size={15} /></span>
       </button>
       <button
@@ -1086,15 +1183,6 @@ export default function App() {
                   <PanelLeft size={19} />
                 </button>
               )}
-              {/* Active model badge in header */}
-              <div
-                className="moon-header-model-badge"
-                title={`${currentModel.name} ${currentModel.tag}`}
-                style={{ "--chip-color": currentModel.color } as React.CSSProperties}
-              >
-                <span className="moon-header-model-dot" />
-                <span>{currentModel.tag}</span>
-              </div>
             </div>
             <div className="moon-header-right">
               <ThemeToggle current={theme} onChange={setTheme} />
@@ -1124,7 +1212,9 @@ export default function App() {
                   transition={{ duration: 0.3, ease: "easeOut" }}
                 >
                   <div className="moon-empty-glow" />
-                  <div className="moon-empty-icon"><Sparkles size={24} /></div>
+                  <div className="moon-empty-icon">
+                    <img src={currentLogoUrl} alt="" className="moon-brand-img moon-brand-img-empty" />
+                  </div>
                   <h1>MoonAI готов</h1>
                   <p>Задай вопрос, попроси разобрать код или начни с одного из быстрых промптов.</p>
                   <div className="moon-suggestion-grid">
@@ -1161,24 +1251,74 @@ export default function App() {
                       <div className={`moon-avatar ${msg.sender}`}>
                         {msg.sender === "user" ? <User size={15} /> : <Bot size={17} />}
                       </div>
-                      <div className={`moon-bubble ${msg.sender}`}>
-                        {msg.sender === "bot" && msgModel && (
-                          <div className="moon-bubble-model-tag" style={{ "--chip-color": msgModel.color } as React.CSSProperties}>
-                            <span className="moon-bubble-model-dot" />
-                            {msgModel.tag}
-                          </div>
-                        )}
-                        <SimpleMarkdown content={msg.text} />
-                        {msg.files && (
-                          <div className="moon-file-list">
-                            {msg.files.map((f, i) => (
-                              <div key={i} className="moon-file-chip"><FileText size={11} />{f.name}</div>
-                            ))}
-                          </div>
-                        )}
-                        {isTyping && msg.id === messages[messages.length - 1]?.id && msg.sender === "bot" && (
-                          <TypingIndicator />
-                        )}
+                      <div className={`moon-msg-stack ${msg.sender}`}>
+                        <div className={`moon-bubble ${msg.sender}`}>
+                          {msg.sender === "bot" && msgModel && (
+                            <div className="moon-bubble-model-tag" style={{ "--chip-color": msgModel.color } as React.CSSProperties}>
+                              <span className="moon-bubble-model-dot" />
+                              {msgModel.tag}
+                            </div>
+                          )}
+                          <SimpleMarkdown content={msg.text} />
+                          {msg.files && (
+                            <div className="moon-file-list">
+                              {msg.files.map((f, i) => (
+                                <div key={i} className="moon-file-chip"><FileText size={11} />{f.name}</div>
+                              ))}
+                            </div>
+                          )}
+                          {isTyping && msg.id === messages[messages.length - 1]?.id && msg.sender === "bot" && (
+                            <TypingIndicator />
+                          )}
+                        </div>
+                        <div className={`moon-msg-actions ${msg.sender}`}>
+                          <button
+                            type="button"
+                            className={`moon-msg-action ${copiedMessageId === msg.id ? "copied" : ""}`}
+                            onClick={() => handleCopyMessage(msg)}
+                            disabled={!msg.text.trim()}
+                            title="Скопировать сообщение"
+                            aria-label={copiedMessageId === msg.id ? "Скопировано" : "Скопировать сообщение"}
+                            data-tooltip={copiedMessageId === msg.id ? "Скопировано" : "Скопировать"}
+                          >
+                            {copiedMessageId === msg.id ? <Check size={14} /> : <Copy size={14} />}
+                          </button>
+                          {msg.sender === "bot" ? (
+                            <button
+                              type="button"
+                              className="moon-msg-action"
+                              onClick={() => handleRegenerateMessage(msg)}
+                              disabled={isTyping}
+                              title="Повторить ответ"
+                              aria-label="Повторить ответ"
+                              data-tooltip="Повторить"
+                            >
+                              <RotateCcw size={14} />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="moon-msg-action"
+                              onClick={() => handleEditMessage(msg)}
+                              disabled={isTyping}
+                              title="Редактировать в поле ввода"
+                              aria-label="Редактировать сообщение"
+                              data-tooltip="Редактировать"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="moon-msg-action danger"
+                            onClick={() => handleDeleteMessage(msg.id)}
+                            title="Удалить сообщение"
+                            aria-label="Удалить сообщение"
+                            data-tooltip="Удалить"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </div>
                     </motion.div>
                   );
@@ -1419,6 +1559,14 @@ const CSS = `
     display: flex; align-items: center; justify-content: center;
     color: var(--accent);
     flex-shrink: 0;
+    overflow: hidden;
+  }
+  .moon-brand-img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+    object-position: center;
   }
   .moon-rail-btn {
     position: relative;
@@ -1467,6 +1615,7 @@ const CSS = `
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
   }
   .moon-rail-btn {
     background: var(--accent);
@@ -1682,28 +1831,6 @@ const CSS = `
   }
   .moon-logo-text { font-size: 16px; font-weight: 700; letter-spacing: -0.4px; }
 
-  /* Active model badge in header */
-  .moon-header-model-badge {
-    display: flex; align-items: center; gap: 5px;
-    height: 30px;
-    padding: 0 10px;
-    background: color-mix(in srgb, var(--chip-color, var(--accent)) 9%, transparent);
-    border: 1px solid color-mix(in srgb, var(--chip-color, var(--accent)) 24%, transparent);
-    border-radius: 999px;
-    font-size: 11px; font-weight: 650;
-    color: var(--chip-color, var(--accent));
-    white-space: nowrap;
-    overflow: hidden;
-    max-width: 112px;
-    text-overflow: ellipsis;
-  }
-  .moon-header-model-dot {
-    width: 5px; height: 5px; border-radius: 50%;
-    background: var(--chip-color, var(--accent));
-    flex-shrink: 0;
-    animation: pulse 2s infinite;
-  }
-
   .moon-icon-btn {
     background: none; border: none; cursor: pointer;
     color: var(--text-secondary); padding: 7px; border-radius: var(--radius-sm);
@@ -1814,6 +1941,7 @@ const CSS = `
     border: 1px solid var(--accent);
     box-shadow: 0 0 28px var(--accent-dim);
     position: relative;
+    overflow: hidden;
   }
   .moon-empty-state h1 { font-size: 26px; font-weight: 700; color: var(--text-primary); }
   .moon-empty-state p {
@@ -1866,8 +1994,18 @@ const CSS = `
   .moon-avatar.bot { background: var(--bg-elevated); border: 1px solid var(--border); color: var(--accent); }
   .moon-avatar.user { background: var(--user-bubble); color: #fff; }
 
-  .moon-bubble {
+  .moon-msg-stack {
     max-width: 78%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-start;
+  }
+  .moon-msg-stack.user { align-items: flex-end; }
+
+  .moon-bubble {
+    max-width: 100%;
     padding: 13px 17px;
     font-size: 14.5px; line-height: 1.65;
     border-radius: var(--radius-xl);
@@ -1882,6 +2020,107 @@ const CSS = `
     background: var(--user-bubble);
     color: #fff;
     border-top-right-radius: 5px;
+  }
+
+  .moon-msg-actions {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 4px;
+    padding: 0 4px;
+    opacity: 0.68;
+    transition: opacity var(--transition);
+  }
+  .moon-msg-row:hover .moon-msg-actions,
+  .moon-msg-actions:focus-within {
+    opacity: 1;
+  }
+  .moon-msg-actions.user {
+    justify-content: flex-end;
+  }
+  .moon-msg-action {
+    position: relative;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-elevated) 74%, transparent);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+  .moon-msg-action:hover:not(:disabled) {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    background: var(--accent-dim);
+    transform: translateY(-1px);
+  }
+  .moon-msg-action.copied {
+    color: var(--green);
+    border-color: color-mix(in srgb, var(--green) 32%, var(--border));
+    background: color-mix(in srgb, var(--green) 12%, transparent);
+  }
+  .moon-msg-action.danger:hover:not(:disabled) {
+    color: #f87171;
+    border-color: rgba(248,113,113,0.38);
+    background: rgba(248,113,113,0.11);
+  }
+  .moon-msg-action::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 8px);
+    transform: translate(-50%, 4px);
+    padding: 5px 8px;
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    box-shadow: 0 10px 28px rgba(0,0,0,0.24);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--transition), transform var(--transition);
+    z-index: 12;
+  }
+  .moon-msg-action::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 4px);
+    width: 7px;
+    height: 7px;
+    background: var(--bg-elevated);
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    transform: translate(-50%, 4px) rotate(45deg);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--transition), transform var(--transition);
+    z-index: 11;
+  }
+  .moon-msg-action:hover:not(:disabled)::after,
+  .moon-msg-action:hover:not(:disabled)::before,
+  .moon-msg-action:focus-visible:not(:disabled)::after,
+  .moon-msg-action:focus-visible:not(:disabled)::before {
+    opacity: 1;
+    transform: translate(-50%, 0) rotate(0deg);
+  }
+  .moon-msg-action:hover:not(:disabled)::before,
+  .moon-msg-action:focus-visible:not(:disabled)::before {
+    transform: translate(-50%, 0) rotate(45deg);
+  }
+  .moon-msg-action:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
   }
 
   /* Model tag inside bubble */
@@ -2271,7 +2510,6 @@ const CSS = `
     .moon-header-left { gap: 7px; min-width: 0; }
     .moon-header-right { gap: 6px; }
     .moon-logo-text { font-size: 15px; }
-    .moon-header-model-badge { max-width: 96px; height: 28px; font-size: 10.5px; padding: 0 8px; }
     .moon-theme-btn { width: 34px; height: 34px; padding: 0; justify-content: center; }
     .moon-theme-btn span, .moon-theme-btn svg:last-child { display: none; }
     .moon-live-badge { padding: 6px 8px; }
@@ -2285,12 +2523,15 @@ const CSS = `
     .moon-suggestion-grid { grid-template-columns: 1fr; gap: 7px; }
     .moon-msg-row { gap: 9px; }
     .moon-avatar { width: 30px; height: 30px; border-radius: 9px; }
+    .moon-msg-stack { max-width: calc(100% - 39px); }
     .moon-bubble {
-      max-width: calc(100% - 39px);
+      max-width: 100%;
       padding: 11px 13px;
       font-size: 14px;
       border-radius: 16px;
     }
+    .moon-msg-actions { opacity: 1; gap: 4px; }
+    .moon-msg-action { width: 28px; height: 28px; }
     .moon-footer { padding: 10px 12px 14px; }
     .moon-input-box { border-radius: 18px; padding: 6px; }
     .moon-input-toolbar { gap: 6px; }
