@@ -70,7 +70,7 @@ interface ModelDef {
 const MODELS: ModelDef[] = [
   {
     id: "moonai-700m-v2",
-    name: "MoonAI 700M",
+    name: "MoonAI-v2",
     tag: "v2 · latest",
     endpoint: "/chat",
     description: "Последняя версия",
@@ -78,7 +78,7 @@ const MODELS: ModelDef[] = [
   },
   {
     id: "moonai-700m-v1",
-    name: "MoonAI 700M",
+    name: "MoonAI-v1",
     tag: "v1 · stable",
     endpoint: "/chat_v1",
     description: "Стабильная версия",
