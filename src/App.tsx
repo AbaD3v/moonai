@@ -1208,6 +1208,7 @@ const CSS = `
   .moon-app {
     display: grid;
     grid-template-columns: 265px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     height: 100vh;
     overflow: hidden;
     font-family: var(--font);
@@ -1535,7 +1536,13 @@ const CSS = `
   .moon-version { font-size: 10px; color: var(--text-muted); font-family: var(--font-mono); }
 
   /* ── Main ── */
-  .moon-main { display: flex; flex-direction: column; min-width: 0; }
+  .moon-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
 
   /* ── Header ── */
   .moon-header {
@@ -1654,18 +1661,24 @@ const CSS = `
 
   /* ── Messages ── */
   .moon-messages {
-    flex: 1; overflow-y: auto; position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    position: relative;
     padding: 28px 20px;
   }
   .moon-messages-inner {
     max-width: 780px; margin: 0 auto;
     display: flex; flex-direction: column; gap: 22px;
+    min-height: 100%;
     padding-bottom: 8px;
   }
 
   /* ── Empty state ── */
   .moon-empty-state {
-    min-height: calc(100vh - 240px);
+    min-height: 100%;
     display: flex; flex-direction: column;
     justify-content: center; align-items: center;
     text-align: center; gap: 16px;
@@ -2128,7 +2141,7 @@ const CSS = `
       box-shadow: 20px 0 50px rgba(0,0,0,0.35);
       z-index: 22;
     }
-    .moon-main { width: 100%; }
+    .moon-main { width: 100%; min-height: 0; }
     .moon-header { height: 52px; padding: 0 12px; gap: 7px; }
     .moon-header-left { gap: 7px; min-width: 0; }
     .moon-header-right { gap: 6px; }
@@ -2140,7 +2153,7 @@ const CSS = `
     .moon-live-label { display: none; }
     .moon-messages { padding: 16px 12px; }
     .moon-messages-inner { max-width: none; gap: 16px; }
-    .moon-empty-state { min-height: calc(100vh - 210px); gap: 13px; }
+    .moon-empty-state { min-height: 100%; gap: 13px; }
     .moon-empty-state h1 { font-size: 22px; }
     .moon-empty-state p { font-size: 13.5px; }
     .moon-empty-glow { width: 220px; height: 220px; }
