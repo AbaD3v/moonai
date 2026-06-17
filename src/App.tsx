@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Send, Bot, User, Sparkles, PanelLeft, Plus,
+  ArrowUp, Bot, User, Sparkles, PanelLeft, Plus,
   Copy, Check, Mic, Sun, Moon, Zap, Upload,
   FileText, X, ChevronDown, CircleStop, Trash2, ChevronRight
 } from "lucide-react";
@@ -332,23 +332,53 @@ function VoiceWave() {
 
 // ─── Model Selector ───────────────────────────────────────────────────────────
 function ModelSelector({ selected, onChange }: { selected: string; onChange: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const current = MODELS.find((m) => m.id === selected) ?? MODELS[0];
+
   return (
-    <div className="moon-model-selector">
-      <span className="moon-model-label">Модель:</span>
-      <div className="moon-model-chips">
-        {MODELS.map((m) => (
-          <button
-            key={m.id}
-            className={`moon-model-chip ${selected === m.id ? "active" : ""}`}
-            onClick={() => onChange(m.id)}
-            style={{ "--chip-color": m.color } as React.CSSProperties}
+    <div className="moon-model-selector" style={{ "--chip-color": current.color } as React.CSSProperties}>
+      <button
+        type="button"
+        className={`moon-model-trigger ${open ? "open" : ""}`}
+        onClick={() => setOpen((value) => !value)}
+        title={`Выбрать модель: ${current.name} ${current.tag}`}
+      >
+        <span className="moon-model-chip-dot" />
+        <span className="moon-model-trigger-label">{current.tag}</span>
+        <ChevronDown size={13} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.98 }}
+            transition={{ duration: 0.14 }}
+            className="moon-model-menu"
           >
-            <span className="moon-model-chip-dot" />
-            <span className="moon-model-chip-name">{m.name}</span>
-            <span className="moon-model-chip-tag">{m.tag}</span>
-          </button>
-        ))}
-      </div>
+            {MODELS.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={`moon-model-option ${selected === m.id ? "active" : ""}`}
+                onClick={() => {
+                  onChange(m.id);
+                  setOpen(false);
+                }}
+                style={{ "--chip-color": m.color } as React.CSSProperties}
+              >
+                <span className="moon-model-chip-dot" />
+                <span className="moon-model-option-copy">
+                  <span className="moon-model-chip-name">{m.name}</span>
+                  <span className="moon-model-chip-tag">{m.tag}</span>
+                </span>
+                {selected === m.id && <Check size={14} />}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -497,6 +527,8 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem(THEME_KEY) as Theme) ?? "dark");
   const [userScrolled, setUserScrolled] = useState(false);
   const [sidebarOverlay, setSidebarOverlay] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [pendingClearOpen, setPendingClearOpen] = useState(false);
 
   const scrollRef    = useRef<HTMLDivElement>(null);
   const textareaRef  = useRef<HTMLTextAreaElement>(null);
@@ -564,6 +596,22 @@ export default function App() {
       return next;
     });
   }, [activeId]);
+
+  const pendingDeleteSession = pendingDeleteId
+    ? sessions.find(s => s.id === pendingDeleteId)
+    : null;
+  const canClearCurrentChat = messages.length > 0;
+
+  const confirmDeleteSession = useCallback(() => {
+    if (!pendingDeleteId) return;
+    deleteSession(pendingDeleteId);
+    setPendingDeleteId(null);
+  }, [deleteSession, pendingDeleteId]);
+
+  const confirmClearCurrentChat = useCallback(() => {
+    updateMessages(activeId, []);
+    setPendingClearOpen(false);
+  }, [activeId, updateMessages]);
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort();
@@ -706,11 +754,83 @@ export default function App() {
   }, [isListening]);
 
   const currentModel = MODELS.find(m => m.id === selectedModel) ?? MODELS[0];
+  const sidebarBody = (
+    <motion.div
+      className="moon-sidebar-inner"
+      initial={false}
+      animate={isSidebarOpen || sidebarOverlay ? { x: 0, opacity: 1 } : { x: -18, opacity: 0 }}
+      transition={{ duration: isSidebarOpen ? 0.18 : 0.12, ease: "easeOut" }}
+    >
+      <div className="moon-sidebar-top">
+        <div className="moon-sidebar-brand">
+          <div className="moon-sidebar-logo"><Sparkles size={14} /></div>
+          <span>MoonAI</span>
+        </div>
+        <button className="moon-new-chat" onClick={newChat}>
+          <Plus size={15} /> Новый чат
+        </button>
+      </div>
+
+      <div className="moon-sessions">
+        <p className="moon-sessions-label">История</p>
+        {sessions.map(sess => (
+          <motion.div
+            key={sess.id}
+            className={`moon-session-item ${sess.id === activeId ? "active" : ""}`}
+            onClick={() => { setActiveId(sess.id); if (sidebarOverlay) setIsSidebarOpen(false); }}
+            whileHover={{ x: 3 }}
+            transition={{ duration: 0.12 }}
+          >
+            <ChevronRight size={11} className="moon-session-arrow" />
+            <span className="moon-session-title">{sess.title}</span>
+            <button
+              className="moon-session-del"
+              onClick={e => { e.stopPropagation(); setPendingDeleteId(sess.id); }}
+              title="Удалить чат"
+            >
+              <X size={11} />
+            </button>
+          </motion.div>
+        ))}
+      </div>
+
+      <div className="moon-sidebar-foot">
+        <div className={`moon-engine-status ${backendStatus}`}>
+          <div className="moon-engine-dot" />
+          <span>{backendState.sidebar}</span>
+        </div>
+        <span className="moon-version">v0.5.0</span>
+      </div>
+    </motion.div>
+  );
+  const sidebarRail = (
+    <div className="moon-sidebar-rail" aria-hidden={isSidebarOpen}>
+      <button
+        type="button"
+        className="moon-rail-logo moon-logo-toggle"
+        onMouseDown={e => { e.preventDefault(); setIsSidebarOpen(true); }}
+        title="Показать панель"
+        aria-label="Показать панель"
+      >
+        <span className="moon-logo-toggle-idle"><Sparkles size={15} /></span>
+        <span className="moon-logo-toggle-hover"><PanelLeft size={15} /></span>
+      </button>
+      <button
+        type="button"
+        className="moon-rail-btn"
+        onMouseDown={e => { e.preventDefault(); newChat(); }}
+        title="Новый чат"
+        aria-label="Новый чат"
+      >
+        <Plus size={17} />
+      </button>
+    </div>
+  );
 
   return (
     <>
       <style>{CSS}</style>
-      <div className={`moon-app theme-${theme}`}>
+      <div className={`moon-app theme-${theme} ${isSidebarOpen ? "sidebar-open" : "sidebar-closed"} ${sidebarOverlay ? "sidebar-overlay" : "sidebar-docked"}`}>
 
         {/* Sidebar backdrop on mobile */}
         <AnimatePresence>
@@ -726,55 +846,112 @@ export default function App() {
         </AnimatePresence>
 
         {/* SIDEBAR */}
+        {!sidebarOverlay && (
+          <aside
+            className={`moon-sidebar ${isSidebarOpen ? "open" : "collapsed"}`}
+          >
+            {sidebarBody}
+            {sidebarRail}
+          </aside>
+        )}
+
         <AnimatePresence>
-          {isSidebarOpen && (
+          {sidebarOverlay && isSidebarOpen && (
             <motion.aside
-              className="moon-sidebar"
-              initial={{ x: -280, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: -280, opacity: 0 }}
+              className="moon-sidebar mobile-open"
+              initial={{ x: -280 }}
+              animate={{ x: 0 }}
+              exit={{ x: -280 }}
               transition={{ type: "spring", stiffness: 320, damping: 32 }}
             >
-              <div className="moon-sidebar-top">
-                <div className="moon-sidebar-brand">
-                  <div className="moon-sidebar-logo"><Sparkles size={14} /></div>
-                  <span>MoonAI</span>
-                </div>
-                <button className="moon-new-chat" onClick={newChat}>
-                  <Plus size={15} /> Новый чат
-                </button>
-              </div>
-
-              <div className="moon-sessions">
-                <p className="moon-sessions-label">История</p>
-                {sessions.map(sess => (
-                  <motion.div
-                    key={sess.id}
-                    className={`moon-session-item ${sess.id === activeId ? "active" : ""}`}
-                    onClick={() => { setActiveId(sess.id); if (sidebarOverlay) setIsSidebarOpen(false); }}
-                    whileHover={{ x: 3 }}
-                    transition={{ duration: 0.12 }}
-                  >
-                    <ChevronRight size={11} className="moon-session-arrow" />
-                    <span className="moon-session-title">{sess.title}</span>
-                    <button
-                      className="moon-session-del"
-                      onClick={e => { e.stopPropagation(); deleteSession(sess.id); }}
-                    >
-                      <X size={11} />
-                    </button>
-                  </motion.div>
-                ))}
-              </div>
-
-              <div className="moon-sidebar-foot">
-                <div className={`moon-engine-status ${backendStatus}`}>
-                  <div className="moon-engine-dot" />
-                  <span>{backendState.sidebar}</span>
-                </div>
-                <span className="moon-version">v0.5.0</span>
-              </div>
+              {sidebarBody}
             </motion.aside>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {pendingDeleteSession && (
+            <motion.div
+              className="moon-confirm-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPendingDeleteId(null)}
+            >
+              <motion.div
+                className="moon-confirm-dialog"
+                initial={{ opacity: 0, scale: 0.96, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 10 }}
+                transition={{ duration: 0.16 }}
+                onClick={e => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="delete-chat-title"
+              >
+                <div className="moon-confirm-icon">
+                  <Trash2 size={18} />
+                </div>
+                <div className="moon-confirm-copy">
+                  <h2 id="delete-chat-title">Удалить чат?</h2>
+                  <p>
+                    Чат «{pendingDeleteSession.title}» будет удалён навсегда.
+                    Вернуть его после удаления нельзя.
+                  </p>
+                </div>
+                <div className="moon-confirm-actions">
+                  <button className="moon-confirm-cancel" onClick={() => setPendingDeleteId(null)}>
+                    Отмена
+                  </button>
+                  <button className="moon-confirm-delete" onClick={confirmDeleteSession}>
+                    Удалить
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {pendingClearOpen && (
+            <motion.div
+              className="moon-confirm-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPendingClearOpen(false)}
+            >
+              <motion.div
+                className="moon-confirm-dialog"
+                initial={{ opacity: 0, scale: 0.96, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 10 }}
+                transition={{ duration: 0.16 }}
+                onClick={e => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="clear-chat-title"
+              >
+                <div className="moon-confirm-icon">
+                  <Trash2 size={18} />
+                </div>
+                <div className="moon-confirm-copy">
+                  <h2 id="clear-chat-title">Очистить чат?</h2>
+                  <p>
+                    Все сообщения в текущем чате будут удалены.
+                    Вернуть их после очистки нельзя.
+                  </p>
+                </div>
+                <div className="moon-confirm-actions">
+                  <button className="moon-confirm-cancel" onClick={() => setPendingClearOpen(false)}>
+                    Отмена
+                  </button>
+                  <button className="moon-confirm-delete" onClick={confirmClearCurrentChat}>
+                    Очистить
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
           )}
         </AnimatePresence>
 
@@ -784,17 +961,25 @@ export default function App() {
           {/* HEADER */}
           <header className="moon-header">
             <div className="moon-header-left">
-              <button className="moon-icon-btn" onClick={() => setIsSidebarOpen(v => !v)} aria-label="Toggle sidebar">
-                <PanelLeft size={19} />
-              </button>
-              <div className="moon-logo">
-                <div className="moon-logo-icon"><Sparkles size={15} /></div>
-                <span className="moon-logo-text">MoonAI</span>
-              </div>
+              {(sidebarOverlay || isSidebarOpen) && (
+                <button
+                  type="button"
+                  className="moon-icon-btn"
+                  onMouseDown={e => { e.preventDefault(); setIsSidebarOpen(v => !v); }}
+                  aria-label={isSidebarOpen ? "Скрыть панель" : "Показать панель"}
+                  title={isSidebarOpen ? "Скрыть панель" : "Показать панель"}
+                >
+                  <PanelLeft size={19} />
+                </button>
+              )}
               {/* Active model badge in header */}
-              <div className="moon-header-model-badge" style={{ "--chip-color": currentModel.color } as React.CSSProperties}>
+              <div
+                className="moon-header-model-badge"
+                title={`${currentModel.name} ${currentModel.tag}`}
+                style={{ "--chip-color": currentModel.color } as React.CSSProperties}
+              >
                 <span className="moon-header-model-dot" />
-                <span>{currentModel.name} <em>{currentModel.tag}</em></span>
+                <span>{currentModel.tag}</span>
               </div>
             </div>
             <div className="moon-header-right">
@@ -805,8 +990,9 @@ export default function App() {
               </div>
               <button
                 className="moon-icon-btn danger"
-                onClick={() => updateMessages(activeId, [])}
-                title="Очистить чат"
+                onClick={() => canClearCurrentChat && setPendingClearOpen(true)}
+                disabled={!canClearCurrentChat}
+                title={canClearCurrentChat ? "Очистить чат" : "Чат уже пустой"}
               >
                 <Trash2 size={17} />
               </button>
@@ -941,18 +1127,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* Model selector above input */}
-              <ModelSelector selected={selectedModel} onChange={setSelectedModel} />
-
               <div className={`moon-input-box ${isListening ? "listening" : ""}`}>
-                <button
-                  className="moon-input-side-btn disabled"
-                  disabled
-                  title="Загрузка файлов пока не подключена"
-                >
-                  <Upload size={16} />
-                </button>
-
                 <textarea
                   ref={textareaRef}
                   rows={1}
@@ -969,24 +1144,38 @@ export default function App() {
                   className="moon-textarea"
                 />
 
-                <button
-                  className={`moon-input-side-btn ${isListening ? "active-voice" : ""}`}
-                  onClick={toggleVoice}
-                  title="Голосовой ввод"
-                >
-                  {isListening ? <VoiceWave /> : <Mic size={16} />}
-                </button>
+                <div className="moon-input-toolbar">
+                  <button
+                    className="moon-input-side-btn disabled"
+                    disabled
+                    title="Загрузка файлов пока не подключена"
+                  >
+                    <Upload size={16} />
+                  </button>
 
-                <button
-                  className="moon-send-btn"
-                  onClick={isTyping ? handleStop : handleSend}
-                  disabled={!isTyping && !input.trim()}
-                >
+                  <div className="moon-input-actions">
+                    <ModelSelector selected={selectedModel} onChange={setSelectedModel} />
+
+                    <button
+                      className={`moon-input-side-btn ${isListening ? "active-voice" : ""}`}
+                      onClick={toggleVoice}
+                      title="Голосовой ввод"
+                    >
+                      {isListening ? <VoiceWave /> : <Mic size={16} />}
+                    </button>
+
+                    <button
+                      className="moon-send-btn"
+                      onClick={isTyping ? handleStop : handleSend}
+                      disabled={!isTyping && !input.trim()}
+                    >
                   {isTyping
                     ? <CircleStop className="moon-stop-icon" />
-                    : <Send className="moon-send-icon" size={21} />
+                    : <ArrowUp className="moon-send-icon" size={20} />
                   }
-                </button>
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <p className="moon-footer-hint">Enter — отправить · Shift+Enter — новая строка</p>
@@ -1017,13 +1206,20 @@ const CSS = `
   html, body, #root { height: 100%; overflow: hidden; }
 
   .moon-app {
-    display: flex;
+    display: grid;
+    grid-template-columns: 265px minmax(0, 1fr);
     height: 100vh;
     overflow: hidden;
     font-family: var(--font);
     background: var(--bg-base);
     color: var(--text-primary);
-    transition: background 0.35s ease, color 0.35s ease;
+    transition: grid-template-columns 0.12s cubic-bezier(0.22, 1, 0.36, 1), background 0.35s ease, color 0.35s ease;
+  }
+  .moon-app.sidebar-closed.sidebar-docked {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+  .moon-app.sidebar-overlay {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -1051,6 +1247,42 @@ const CSS = `
     flex-direction: column;
     z-index: 20;
     overflow: hidden;
+    position: relative;
+  }
+  .moon-app.sidebar-docked .moon-sidebar {
+    width: 100%;
+    min-width: 0;
+  }
+  .moon-sidebar.collapsed {
+    pointer-events: auto;
+  }
+  .moon-sidebar-inner {
+    width: 265px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .moon-sidebar.collapsed .moon-sidebar-inner {
+    pointer-events: none;
+  }
+  .moon-sidebar-rail {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 56px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 9px;
+    padding: 15px 0;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-6px);
+    transition: opacity 0.14s ease, transform 0.14s ease;
+  }
+  .moon-sidebar.collapsed .moon-sidebar-rail {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
   }
   .moon-sidebar-top {
     padding: 16px 14px 12px;
@@ -1072,6 +1304,77 @@ const CSS = `
     display: flex; align-items: center; justify-content: center;
     color: var(--accent);
     flex-shrink: 0;
+  }
+  .moon-rail-btn {
+    position: relative;
+    padding: 0;
+    appearance: none;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+  .moon-logo-toggle {
+    position: relative;
+    padding: 0;
+    appearance: none;
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+  .moon-logo-toggle-idle,
+  .moon-logo-toggle-hover {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.14s ease, transform 0.14s ease;
+  }
+  .moon-logo-toggle-hover {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  .moon-rail-logo:hover .moon-logo-toggle-idle {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  .moon-rail-logo:hover .moon-logo-toggle-hover {
+    opacity: 1;
+    transform: scale(1);
+  }
+  .moon-rail-logo,
+  .moon-rail-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .moon-rail-btn {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    box-shadow: 0 8px 18px var(--accent-dim);
+  }
+  .moon-rail-logo {
+    color: var(--accent);
+    background: var(--accent-dim);
+    border-color: var(--accent);
+  }
+  .moon-rail-logo:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    transform: translateY(-1px);
+  }
+  .moon-rail-btn:hover {
+    color: #fff;
+    border-color: var(--accent-hover);
+    background: var(--accent-hover);
+    transform: translateY(-1px);
   }
   .moon-sidebar-brand span {
     font-size: 14px;
@@ -1133,6 +1436,83 @@ const CSS = `
   .moon-session-item:hover .moon-session-del { opacity: 1; }
   .moon-session-del:hover { color: #f87171; }
 
+  .moon-confirm-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0,0,0,0.52);
+    backdrop-filter: blur(5px);
+  }
+  .moon-confirm-dialog {
+    width: min(410px, 100%);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--bg-elevated);
+    box-shadow: 0 24px 70px rgba(0,0,0,0.42);
+    padding: 18px;
+  }
+  .moon-confirm-icon {
+    width: 38px; height: 38px;
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    color: #f87171;
+    background: rgba(248,113,113,0.1);
+    border: 1px solid rgba(248,113,113,0.22);
+    margin-bottom: 14px;
+  }
+  .moon-confirm-copy h2 {
+    margin: 0 0 7px;
+    font-size: 18px;
+    line-height: 1.25;
+    letter-spacing: 0;
+    color: var(--text-primary);
+  }
+  .moon-confirm-copy p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13.5px;
+    line-height: 1.55;
+  }
+  .moon-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 18px;
+  }
+  .moon-confirm-actions button {
+    height: 36px;
+    border-radius: 10px;
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 650;
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+  .moon-confirm-cancel {
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+  }
+  .moon-confirm-cancel:hover {
+    color: var(--text-primary);
+    border-color: var(--text-muted);
+  }
+  .moon-confirm-delete {
+    background: #ef4444;
+    border-color: #ef4444 !important;
+    color: #fff;
+    box-shadow: 0 10px 24px rgba(239,68,68,0.22);
+  }
+  .moon-confirm-delete:hover {
+    background: #dc2626;
+    transform: translateY(-1px);
+  }
+
   .moon-sidebar-foot {
     padding: 13px 16px;
     border-top: 1px solid var(--glass-border);
@@ -1155,7 +1535,7 @@ const CSS = `
   .moon-version { font-size: 10px; color: var(--text-muted); font-family: var(--font-mono); }
 
   /* ── Main ── */
-  .moon-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .moon-main { display: flex; flex-direction: column; min-width: 0; }
 
   /* ── Header ── */
   .moon-header {
@@ -1184,18 +1564,18 @@ const CSS = `
   /* Active model badge in header */
   .moon-header-model-badge {
     display: flex; align-items: center; gap: 5px;
-    padding: 4px 10px;
-    background: color-mix(in srgb, var(--chip-color, var(--accent)) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--chip-color, var(--accent)) 30%, transparent);
+    height: 30px;
+    padding: 0 10px;
+    background: color-mix(in srgb, var(--chip-color, var(--accent)) 9%, transparent);
+    border: 1px solid color-mix(in srgb, var(--chip-color, var(--accent)) 24%, transparent);
     border-radius: 999px;
-    font-size: 11px; font-weight: 500;
+    font-size: 11px; font-weight: 650;
     color: var(--chip-color, var(--accent));
     white-space: nowrap;
     overflow: hidden;
-    max-width: 160px;
+    max-width: 112px;
     text-overflow: ellipsis;
   }
-  .moon-header-model-badge em { font-style: normal; opacity: 0.65; margin-left: 3px; }
   .moon-header-model-dot {
     width: 5px; height: 5px; border-radius: 50%;
     background: var(--chip-color, var(--accent));
@@ -1211,6 +1591,16 @@ const CSS = `
   }
   .moon-icon-btn:hover { background: var(--accent-dim); color: var(--text-primary); }
   .moon-icon-btn.danger:hover { color: #f87171; background: rgba(248,113,113,0.1); }
+  .moon-icon-btn:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+    color: var(--text-muted);
+    background: transparent;
+  }
+  .moon-icon-btn:disabled:hover {
+    color: var(--text-muted);
+    background: transparent;
+  }
 
   .moon-live-badge {
     display: flex; align-items: center; gap: 5px;
@@ -1238,7 +1628,7 @@ const CSS = `
     display: flex; align-items: center; gap: 6px;
     background: var(--bg-elevated); border: 1px solid var(--border);
     color: var(--text-secondary); cursor: pointer;
-    padding: 6px 10px; border-radius: var(--radius-sm);
+    padding: 6px 10px; border-radius: 999px;
     font-size: 12px; font-weight: 500; font-family: var(--font);
     transition: all var(--transition);
   }
@@ -1383,52 +1773,99 @@ const CSS = `
 
   /* ── Model selector ── */
   .moon-model-selector {
-    display: flex; align-items: center; gap: 10px;
-    padding: 0 4px 10px;
-    flex-wrap: wrap;
+    position: relative;
+    flex-shrink: 1;
+    min-width: 0;
   }
-  .moon-model-label {
-    font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
-    text-transform: uppercase; color: var(--text-muted);
-    white-space: nowrap;
-  }
-  .moon-model-chips {
-    display: flex; gap: 6px; flex-wrap: wrap;
-  }
-  .moon-model-chip {
+  .moon-model-trigger {
     display: inline-flex; align-items: center; gap: 5px;
-    padding: 5px 12px;
+    max-width: 122px;
+    height: 32px;
+    padding: 0 9px;
     border-radius: 999px;
     border: 1px solid var(--border);
-    background: var(--bg-elevated);
+    background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
     color: var(--text-secondary);
-    font-size: 12px; font-weight: 500;
+    font-size: 11.5px; font-weight: 650;
     font-family: var(--font);
     cursor: pointer;
     transition: all 0.18s ease;
     white-space: nowrap;
+    overflow: hidden;
   }
-  .moon-model-chip:hover {
+  .moon-model-trigger:hover,
+  .moon-model-trigger.open {
     border-color: var(--chip-color, var(--accent));
     color: var(--chip-color, var(--accent));
     background: color-mix(in srgb, var(--chip-color, var(--accent)) 8%, transparent);
   }
-  .moon-model-chip.active {
-    border-color: var(--chip-color, var(--accent));
+  .moon-model-trigger.open { box-shadow: 0 0 0 3px color-mix(in srgb, var(--chip-color, var(--accent)) 16%, transparent); }
+  .moon-model-trigger svg { flex-shrink: 0; transition: transform 0.18s ease; }
+  .moon-model-trigger.open svg { transform: rotate(180deg); }
+  .moon-model-trigger-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+  .moon-model-menu {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 8px);
+    z-index: 20;
+    width: min(270px, calc(100vw - 48px));
+    padding: 6px;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    box-shadow: 0 18px 45px rgba(0,0,0,0.34);
+  }
+  .moon-model-option {
+    width: 100%;
+    display: flex; align-items: center; gap: 8px;
+    min-height: 42px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font);
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.16s ease;
+  }
+  .moon-model-option:hover {
+    background: color-mix(in srgb, var(--chip-color, var(--accent)) 9%, transparent);
+    color: var(--chip-color, var(--accent));
+  }
+  .moon-model-option.active {
     background: color-mix(in srgb, var(--chip-color, var(--accent)) 12%, transparent);
     color: var(--chip-color, var(--accent));
     font-weight: 600;
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--chip-color, var(--accent)) 20%, transparent);
+  }
+  .moon-model-option-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    flex: 1;
+  }
+  .moon-model-option svg { flex-shrink: 0; }
+  .moon-model-option-copy span {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .moon-model-chip-dot {
     width: 5px; height: 5px; border-radius: 50%;
     background: currentColor; flex-shrink: 0;
     opacity: 0.7;
   }
-  .moon-model-chip.active .moon-model-chip-dot { opacity: 1; animation: pulse 2s infinite; }
+  .moon-model-trigger .moon-model-chip-dot,
+  .moon-model-option.active .moon-model-chip-dot { opacity: 1; animation: pulse 2s infinite; }
   .moon-model-chip-name { font-weight: 600; }
   .moon-model-chip-tag {
-    font-size: 10px; opacity: 0.6; font-weight: 400;
+    font-size: 10px; opacity: 0.68; font-weight: 500;
     font-family: var(--font-mono);
   }
 
@@ -1471,11 +1908,11 @@ const CSS = `
   }
   .moon-input-wrap { max-width: 780px; margin: 0 auto; position: relative; }
   .moon-input-box {
-    display: flex; align-items: flex-end; gap: 5px;
+    display: flex; flex-direction: column; gap: 4px;
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-xl);
-    padding: 6px;
+    padding: 8px;
     transition: border-color 0.2s, box-shadow 0.2s;
   }
   .moon-input-box:focus-within {
@@ -1487,19 +1924,32 @@ const CSS = `
     box-shadow: 0 0 0 3px rgba(248,113,113,0.15);
   }
   .moon-textarea {
-    flex: 1; background: none; border: none; outline: none; resize: none;
+    width: 100%; background: none; border: none; outline: none; resize: none;
     color: var(--text-primary); font-family: var(--font); font-size: 14px;
-    line-height: 1.6; padding: 8px 6px;
+    line-height: 1.6; padding: 6px 8px 2px;
     max-height: 200px; overflow-y: auto;
   }
   .moon-textarea::placeholder { color: var(--text-muted); }
+  .moon-input-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+  }
+  .moon-input-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
 
   .moon-input-side-btn {
     background: none; border: none; cursor: pointer;
     color: var(--text-muted); padding: 8px;
     display: flex; align-items: center; justify-content: center;
     border-radius: var(--radius-sm); transition: all var(--transition);
-    flex-shrink: 0; align-self: flex-end; margin-bottom: 1px;
+    flex-shrink: 0;
   }
   .moon-input-side-btn:hover { color: var(--accent); background: var(--accent-dim); }
   .moon-input-side-btn.active-voice { color: #f87171; background: rgba(248,113,113,0.1); }
@@ -1509,27 +1959,31 @@ const CSS = `
   .moon-input-side-btn:disabled:hover { color: var(--text-muted); background: none; }
 
   .moon-send-btn {
-    width: 40px; height: 40px; border-radius: 50%;
+    width: 36px; height: 36px; border-radius: 50%;
+    box-sizing: border-box;
+    padding: 0;
     border: none; cursor: pointer; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
-    background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-    color: #fff; align-self: flex-end;
-    transition: transform var(--transition), filter var(--transition), box-shadow var(--transition);
-    box-shadow: 0 8px 20px var(--accent-dim);
+    background: linear-gradient(180deg, #8b8cff 0%, var(--accent) 100%);
+    color: #fff;
+    transition: transform var(--transition), filter var(--transition), box-shadow var(--transition), background var(--transition);
+    box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 28%, transparent), inset 0 1px 0 rgba(255,255,255,0.24);
   }
   .moon-send-btn:hover:not(:disabled) {
-    filter: brightness(1.1); transform: translateY(-1px) scale(1.04);
-    box-shadow: 0 12px 26px var(--accent-dim);
+    filter: brightness(1.08); transform: translateY(-1px) scale(1.04);
+    box-shadow: 0 14px 30px color-mix(in srgb, var(--accent) 36%, transparent), inset 0 1px 0 rgba(255,255,255,0.28);
   }
   .moon-send-btn:active:not(:disabled) { transform: scale(0.96); }
   .moon-send-btn:disabled {
-    background: var(--bg-elevated); color: var(--text-muted);
-    cursor: default; box-shadow: none; border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-elevated) 92%, white 8%);
+    color: color-mix(in srgb, var(--text-muted) 78%, white 22%);
+    cursor: default;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+    border: 1px solid color-mix(in srgb, var(--border) 78%, white 22%);
   }
   .moon-send-icon {
-    width: 21px; height: 21px; min-width: 21px;
-    display: block; stroke-width: 2.6;
-    transform: translateX(1px) translateY(-1px);
+    width: 20px; height: 20px; min-width: 20px;
+    display: block; stroke-width: 2.8;
   }
   .moon-stop-icon { width: 18px; height: 18px; background: white; border-radius: 4px; }
 
@@ -1679,7 +2133,7 @@ const CSS = `
     .moon-header-left { gap: 7px; min-width: 0; }
     .moon-header-right { gap: 6px; }
     .moon-logo-text { font-size: 15px; }
-    .moon-header-model-badge { max-width: 100px; font-size: 10px; padding: 3px 8px; }
+    .moon-header-model-badge { max-width: 96px; height: 28px; font-size: 10.5px; padding: 0 8px; }
     .moon-theme-btn { width: 34px; height: 34px; padding: 0; justify-content: center; }
     .moon-theme-btn span, .moon-theme-btn svg:last-child { display: none; }
     .moon-live-badge { padding: 6px 8px; }
@@ -1700,15 +2154,15 @@ const CSS = `
       border-radius: 16px;
     }
     .moon-footer { padding: 10px 12px 14px; }
-    .moon-input-box { border-radius: 18px; padding: 5px; }
-    .moon-send-btn { width: 38px; height: 38px; }
+    .moon-input-box { border-radius: 18px; padding: 6px; }
+    .moon-input-toolbar { gap: 6px; }
+    .moon-send-btn { width: 36px; height: 36px; }
     .moon-send-icon { width: 19px; height: 19px; min-width: 19px; }
     .moon-stop-icon { width: 16px; height: 16px; }
     .moon-scroll-btn { height: 30px; padding: 0 10px; font-size: 11px; }
     .moon-footer-hint { display: none; }
-    .moon-model-selector { gap: 7px; padding-bottom: 8px; }
-    .moon-model-chip { padding: 4px 10px; font-size: 11px; }
-    .moon-model-chip-tag { display: none; }
+    .moon-model-trigger { max-width: 104px; height: 32px; padding: 0 8px; font-size: 11px; }
+    .moon-model-option .moon-model-chip-tag { display: none; }
   }
 
   /* Safe area for notched phones */
