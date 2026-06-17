@@ -151,21 +151,152 @@ function escapeHtml(text: string) {
     .replace(/'/g, "&#039;");
 }
 
+type MarkdownPart = { type: "text" | "code"; value: string; lang?: string };
+
+function normalizeCodeLang(value?: string) {
+  const lang = (value || "").trim().replace(/^[:=]/, "").trim();
+  return lang ? lang.split(/\s+/)[0].toLowerCase() : "text";
+}
+
+function trimCodeBlock(value: string) {
+  return value.replace(/^\n+|\n+$/g, "");
+}
+
+async function copyToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the textarea fallback for webviews with strict clipboard permissions.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
+}
+
+function splitMarkdownParts(content: string): MarkdownPart[] {
+  const parts: MarkdownPart[] = [];
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  let textLines: string[] = [];
+  let codeLines: string[] = [];
+  let codeLang = "text";
+  let codeMode: "fence" | "bbcode" | null = null;
+
+  const pushText = () => {
+    const value = textLines.join("\n");
+    if (value) parts.push({ type: "text", value });
+    textLines = [];
+  };
+
+  const pushCode = () => {
+    parts.push({ type: "code", lang: codeLang, value: trimCodeBlock(codeLines.join("\n")) });
+    codeLines = [];
+    codeLang = "text";
+    codeMode = null;
+  };
+
+  lines.forEach((line) => {
+    if (codeMode === "fence") {
+      if (/^\s*```\s*$/.test(line)) {
+        pushCode();
+        return;
+      }
+      codeLines.push(line);
+      return;
+    }
+
+    if (codeMode === "bbcode") {
+      const closeMatch = /\[\/code\]/i.exec(line);
+      if (closeMatch) {
+        codeLines.push(line.slice(0, closeMatch.index));
+        pushCode();
+        const rest = line.slice(closeMatch.index + closeMatch[0].length);
+        if (rest) textLines.push(rest);
+        return;
+      }
+      codeLines.push(line);
+      return;
+    }
+
+    const fenceMatch = /^\s*```([^\n`]*)\s*$/.exec(line);
+    if (fenceMatch) {
+      pushText();
+      codeMode = "fence";
+      codeLang = normalizeCodeLang(fenceMatch[1]);
+      return;
+    }
+
+    const codeMatch = /\[code(?:=([^\]]*))?\]/i.exec(line);
+    if (!codeMatch) {
+      textLines.push(line);
+      return;
+    }
+
+    const before = line.slice(0, codeMatch.index);
+    if (before) textLines.push(before);
+    pushText();
+
+    const afterOpen = line.slice(codeMatch.index + codeMatch[0].length);
+    const closeMatch = /\[\/code\]/i.exec(afterOpen);
+    if (closeMatch) {
+      parts.push({
+        type: "code",
+        lang: normalizeCodeLang(codeMatch[1]),
+        value: trimCodeBlock(afterOpen.slice(0, closeMatch.index)),
+      });
+      const rest = afterOpen.slice(closeMatch.index + closeMatch[0].length);
+      if (rest) textLines.push(rest);
+      return;
+    }
+
+    codeMode = "bbcode";
+    codeLang = normalizeCodeLang(codeMatch[1]);
+    if (afterOpen) codeLines.push(afterOpen);
+  });
+
+  if (codeMode) pushCode();
+  pushText();
+
+  return parts;
+}
+
 function CodeBlock({ lang, value }: { lang: string; value: string }) {
   const [copied, setCopied] = useState(false);
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(value).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+  const copyResetRef = useRef<number | null>(null);
+  const handleCopy = useCallback(async () => {
+    setCopied(true);
+    if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+    copyResetRef.current = window.setTimeout(() => setCopied(false), 2000);
+
+    try {
+      await copyToClipboard(value);
+    } catch {
+      copyResetRef.current = window.setTimeout(() => setCopied(false), 900);
+    }
   }, [value]);
+
+  useEffect(() => () => {
+    if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+  }, []);
+
   return (
     <div className="moon-code-block">
       <div className="moon-code-header">
         <span className="moon-code-lang">{lang || "text"}</span>
-        <button className="moon-code-copy" onClick={handleCopy}>
+        <button type="button" className={`moon-code-copy ${copied ? "copied" : ""}`} onClick={handleCopy}>
           {copied ? <Check size={12} /> : <Copy size={12} />}
-          <span>{copied ? "Скопировано" : "Копировать"}</span>
+          <span>{copied ? "Скопировано" : "Скопировать"}</span>
         </button>
       </div>
       <pre className="moon-code-pre"><code>{value}</code></pre>
@@ -174,24 +305,7 @@ function CodeBlock({ lang, value }: { lang: string; value: string }) {
 }
 
 function SimpleMarkdown({ content }: { content: string }) {
-  const parts = useMemo(() => {
-    const codeRe = /```([^\n`]*)\n([\s\S]*?)```|\[code(?:=([^\]]*))?]([\s\S]*?)\[\/code\]/g;
-    const out: Array<{ type: "text" | "code"; value: string; lang?: string }> = [];
-    let last = 0;
-    let m: RegExpExecArray | null;
-    while ((m = codeRe.exec(content)) !== null) {
-      if (m.index > last) out.push({ type: "text", value: content.slice(last, m.index) });
-      if (m[0].startsWith("```")) {
-        const rawLang = (m[1] || "text").trim();
-        out.push({ type: "code", lang: rawLang.split(/\s+/)[0] || "text", value: m[2].trim() });
-      } else {
-        out.push({ type: "code", lang: (m[3] || "text").trim() || "text", value: m[4].trim() });
-      }
-      last = codeRe.lastIndex;
-    }
-    if (last < content.length) out.push({ type: "text", value: content.slice(last) });
-    return out;
-  }, [content]);
+  const parts = useMemo(() => splitMarkdownParts(content), [content]);
 
   const formatInline = useCallback((text: string) => {
     const safe = escapeHtml(text);
@@ -1051,7 +1165,7 @@ export default function App() {
                         {msg.sender === "bot" && msgModel && (
                           <div className="moon-bubble-model-tag" style={{ "--chip-color": msgModel.color } as React.CSSProperties}>
                             <span className="moon-bubble-model-dot" />
-                            {msgModel.name} <em>{msgModel.tag}</em>
+                            {msgModel.tag}
                           </div>
                         )}
                         <SimpleMarkdown content={msg.text} />
@@ -1778,7 +1892,6 @@ const CSS = `
     margin-bottom: 8px;
     opacity: 0.8;
   }
-  .moon-bubble-model-tag em { font-style: normal; opacity: 0.65; }
   .moon-bubble-model-dot {
     width: 5px; height: 5px; border-radius: 50%;
     background: var(--chip-color, var(--accent)); flex-shrink: 0;
@@ -2074,11 +2187,23 @@ const CSS = `
   }
   .moon-code-copy {
     display: flex; align-items: center; gap: 5px;
-    background: none; border: none; cursor: pointer;
-    color: var(--text-muted); font-size: 11px; font-family: var(--font);
-    padding: 3px 8px; border-radius: 6px; transition: all var(--transition);
+    background: var(--accent-dim);
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+    cursor: pointer;
+    color: var(--accent);
+    font-size: 11px; font-weight: 700; font-family: var(--font);
+    padding: 4px 9px; border-radius: 999px; transition: all var(--transition);
   }
-  .moon-code-copy:hover { color: var(--accent); background: var(--accent-dim); }
+  .moon-code-copy:hover {
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    border-color: var(--accent);
+    transform: translateY(-1px);
+  }
+  .moon-code-copy.copied {
+    color: var(--green);
+    background: color-mix(in srgb, var(--green) 13%, transparent);
+    border-color: color-mix(in srgb, var(--green) 32%, transparent);
+  }
   .moon-code-pre {
     background: var(--bg-base); padding: 16px; overflow-x: auto;
     font-size: 13px; line-height: 1.65; color: var(--accent-hover);
