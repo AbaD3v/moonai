@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowUp, Bot, User, PanelLeft, Plus,
   Copy, Check, Mic, Sun, Moon, Zap, Upload, RotateCcw, Pencil,
-  FileText, X, ChevronDown, CircleStop, Trash2, ChevronRight
+  FileText, X, ChevronDown, CircleStop, Trash2, ChevronRight, Search
 } from "lucide-react";
 import moonLogoUrl from "./assets/MoonAILogo.png";
 import moonLogoLightUrl from "./assets/MoonAILogoWhite.png";
@@ -57,6 +57,19 @@ interface UploadedFile {
   name: string;
   size: number;
   type: string;
+}
+
+type ToastVariant = "success" | "error" | "info" | "warning";
+
+interface ToastPayload {
+  title: string;
+  detail?: string;
+  variant?: ToastVariant;
+}
+
+interface ToastMessage extends ToastPayload {
+  id: string;
+  variant: ToastVariant;
 }
 
 // ─── Model Definitions ────────────────────────────────────────────────────────
@@ -187,6 +200,134 @@ async function copyToClipboard(text: string) {
   document.body.removeChild(textarea);
 }
 
+const TOAST_EVENT = "moonai:toast";
+
+function emitToast(payload: ToastPayload) {
+  window.dispatchEvent(new CustomEvent<ToastPayload>(TOAST_EVENT, { detail: payload }));
+}
+
+const CODE_LANG_ALIASES: Record<string, string> = {
+  js: "javascript",
+  jsx: "javascript",
+  ts: "typescript",
+  tsx: "typescript",
+  py: "python",
+  python3: "python",
+  yml: "yaml",
+  sh: "bash",
+  shell: "bash",
+  plaintext: "text",
+};
+
+const PY_KEYWORDS = new Set([
+  "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
+  "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in",
+  "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
+  "with", "yield",
+]);
+const PY_LITERALS = new Set(["True", "False", "None"]);
+const PY_BUILTINS = new Set([
+  "bool", "dict", "enumerate", "float", "input", "int", "len", "list", "map", "max",
+  "min", "open", "print", "range", "set", "str", "sum", "tuple", "zip",
+]);
+
+const JS_KEYWORDS = new Set([
+  "async", "await", "break", "case", "catch", "class", "const", "continue", "debugger",
+  "default", "delete", "do", "else", "export", "extends", "finally", "for", "from",
+  "function", "if", "import", "in", "instanceof", "let", "new", "of", "return",
+  "switch", "throw", "try", "typeof", "var", "void", "while", "with", "yield",
+]);
+const JS_LITERALS = new Set(["true", "false", "null", "undefined", "NaN", "Infinity"]);
+
+function canonicalCodeLang(lang?: string) {
+  const normalized = normalizeCodeLang(lang);
+  return CODE_LANG_ALIASES[normalized] ?? normalized;
+}
+
+function detectCodeLang(value: string) {
+  const code = value.trim();
+  if (!code) return "text";
+
+  if ((code.startsWith("{") && code.endsWith("}")) || (code.startsWith("[") && code.endsWith("]"))) {
+    try {
+      JSON.parse(code);
+      return "json";
+    } catch {
+      // Keep scoring below for object-like JavaScript snippets.
+    }
+  }
+
+  let pythonScore = 0;
+  let jsScore = 0;
+  if (/^\s*(from\s+[\w.]+\s+import|import\s+[\w.]+)/m.test(code)) pythonScore += 3;
+  if (/^\s*def\s+\w+\s*\([^)]*\)\s*:/m.test(code)) pythonScore += 4;
+  if (/^\s*class\s+\w+(?:\([^)]*\))?\s*:/m.test(code)) pythonScore += 2;
+  if (/^\s*#/m.test(code)) pythonScore += 1;
+  if (/\b(print|len|range|enumerate)\s*\(/.test(code)) pythonScore += 1;
+  if (/\b(True|False|None)\b/.test(code)) pythonScore += 1;
+
+  if (/\b(const|let|var|function|=>|console\.|document\.|window\.)\b/.test(code)) jsScore += 3;
+  if (/^\s*import\s+.+\s+from\s+["']/m.test(code)) jsScore += 2;
+  if (/^\s*export\s+/m.test(code)) jsScore += 2;
+  if (/^\s*\/\//m.test(code)) jsScore += 1;
+  if (/\b(true|false|null|undefined)\b/.test(code)) jsScore += 1;
+
+  if (pythonScore >= jsScore + 2 && pythonScore >= 2) return "python";
+  if (jsScore >= pythonScore + 1 && jsScore >= 2) return "javascript";
+  return "text";
+}
+
+function resolveCodeLang(lang: string | undefined, value: string) {
+  const canonical = canonicalCodeLang(lang);
+  return canonical && canonical !== "text" ? canonical : detectCodeLang(value);
+}
+
+function classifyCodeToken(token: string, lang: string, source: string, tokenEnd: number) {
+  const next = source.slice(tokenEnd);
+  if (/^(#|\/\/|\/\*)/.test(token)) return "comment";
+  if (/^(`|"""|'''|"|')/.test(token)) {
+    return lang === "json" && /^\s*:/.test(next) ? "key" : "string";
+  }
+  if (/^\d/.test(token)) return "number";
+  if (/^[{}()[\].,:;+\-*/%=<>!&|^~?]+$/.test(token)) return "punctuation";
+
+  if (lang === "python") {
+    if (PY_KEYWORDS.has(token)) return "keyword";
+    if (PY_LITERALS.has(token)) return "literal";
+    if (PY_BUILTINS.has(token)) return "builtin";
+  } else if (lang === "javascript" || lang === "typescript") {
+    if (JS_KEYWORDS.has(token)) return "keyword";
+    if (JS_LITERALS.has(token)) return "literal";
+  } else if (lang === "json") {
+    if (/^(true|false|null)$/.test(token)) return "literal";
+  }
+
+  if (/^[A-Za-z_$][\w$]*$/.test(token) && /^\s*\(/.test(next)) return "function";
+  return "";
+}
+
+function highlightCode(value: string, lang: string) {
+  if (!value) return "";
+  const tokenRe = lang === "python"
+    ? /("""[\s\S]*?"""|'''[\s\S]*?'''|#.*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_]\w*\b|[{}()[\].,:;+\-*/%=<>!&|^~]+)/g
+    : /(\/\/.*|\/\*[\s\S]*?\*\/|`(?:\\[\s\S]|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*\b|[{}()[\].,:;+\-*/%=<>!&|^~?]+)/g;
+
+  let html = "";
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = tokenRe.exec(value)) !== null) {
+    const token = match[0];
+    html += escapeHtml(value.slice(lastIndex, match.index));
+    const cls = classifyCodeToken(token, lang, value, tokenRe.lastIndex);
+    html += cls
+      ? `<span class="moon-code-token ${cls}">${escapeHtml(token)}</span>`
+      : escapeHtml(token);
+    lastIndex = tokenRe.lastIndex;
+  }
+  html += escapeHtml(value.slice(lastIndex));
+  return html;
+}
+
 function splitMarkdownParts(content: string): MarkdownPart[] {
   const parts: MarkdownPart[] = [];
   const lines = content.replace(/\r\n/g, "\n").split("\n");
@@ -275,7 +416,10 @@ function splitMarkdownParts(content: string): MarkdownPart[] {
 
 function CodeBlock({ lang, value }: { lang: string; value: string }) {
   const [copied, setCopied] = useState(false);
+  const [wrapped, setWrapped] = useState(false);
   const copyResetRef = useRef<number | null>(null);
+  const detectedLang = useMemo(() => resolveCodeLang(lang, value), [lang, value]);
+  const highlightedCode = useMemo(() => highlightCode(value, detectedLang), [detectedLang, value]);
   const handleCopy = useCallback(async () => {
     setCopied(true);
     if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
@@ -283,8 +427,10 @@ function CodeBlock({ lang, value }: { lang: string; value: string }) {
 
     try {
       await copyToClipboard(value);
+      emitToast({ title: "Код скопирован", variant: "success" });
     } catch {
       copyResetRef.current = window.setTimeout(() => setCopied(false), 900);
+      emitToast({ title: "Не удалось скопировать код", detail: "Попробуй выделить код вручную.", variant: "error" });
     }
   }, [value]);
 
@@ -295,13 +441,31 @@ function CodeBlock({ lang, value }: { lang: string; value: string }) {
   return (
     <div className="moon-code-block">
       <div className="moon-code-header">
-        <span className="moon-code-lang">{lang || "text"}</span>
-        <button type="button" className={`moon-code-copy ${copied ? "copied" : ""}`} onClick={handleCopy}>
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-          <span>{copied ? "Скопировано" : "Скопировать"}</span>
-        </button>
+        <div className="moon-code-title">
+          <span className="moon-code-lang">{detectedLang}</span>
+          {canonicalCodeLang(lang) === "text" && detectedLang !== "text" && (
+            <span className="moon-code-auto">auto</span>
+          )}
+        </div>
+        <div className="moon-code-actions">
+          <button
+            type="button"
+            className={`moon-code-wrap ${wrapped ? "active" : ""}`}
+            onClick={() => setWrapped(value => !value)}
+            aria-pressed={wrapped}
+            title={wrapped ? "Отключить перенос строк" : "Включить перенос строк"}
+          >
+            {wrapped ? "Без переноса" : "Перенос"}
+          </button>
+          <button type="button" className={`moon-code-copy ${copied ? "copied" : ""}`} onClick={handleCopy}>
+            {copied ? <Check size={12} /> : <Copy size={12} />}
+            <span>{copied ? "Скопировано" : "Скопировать"}</span>
+          </button>
+        </div>
       </div>
-      <pre className="moon-code-pre"><code>{value}</code></pre>
+      <pre className={`moon-code-pre ${wrapped ? "wrapped" : ""}`}>
+        <code dangerouslySetInnerHTML={{ __html: highlightedCode }} />
+      </pre>
     </div>
   );
 }
@@ -580,6 +744,46 @@ function DropZone({ onFiles, onClose }: { onFiles: (files: UploadedFile[]) => vo
   );
 }
 
+function ToastViewport({ toasts, onDismiss }: { toasts: ToastMessage[]; onDismiss: (id: string) => void }) {
+  const toastIcons: Record<ToastVariant, React.ReactNode> = {
+    success: <Check size={15} />,
+    error: <X size={15} />,
+    info: <Zap size={15} />,
+    warning: <CircleStop size={15} />,
+  };
+
+  return (
+    <div className="moon-toast-viewport" aria-live="polite" aria-atomic="true">
+      <AnimatePresence initial={false}>
+        {toasts.map(toast => (
+          <motion.div
+            key={toast.id}
+            className={`moon-toast ${toast.variant}`}
+            initial={{ opacity: 0, y: 12, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 18, scale: 0.97 }}
+            transition={{ duration: 0.16, ease: "easeOut" }}
+          >
+            <div className="moon-toast-icon">{toastIcons[toast.variant]}</div>
+            <div className="moon-toast-copy">
+              <strong>{toast.title}</strong>
+              {toast.detail && <span>{toast.detail}</span>}
+            </div>
+            <button
+              type="button"
+              className="moon-toast-close"
+              onClick={() => onDismiss(toast.id)}
+              aria-label="Закрыть уведомление"
+            >
+              <X size={12} />
+            </button>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 // ─── Storage helpers ──────────────────────────────────────────────────────────
 const STORAGE_KEY = "moonai_sessions";
 const THEME_KEY   = "moonai_theme";
@@ -619,6 +823,24 @@ function makeSession(id: string): ChatSession {
   return { id, title: NEW_CHAT_TITLE, lastActive: Date.now(), messages: [] };
 }
 
+type SessionGroupKey = "today" | "yesterday" | "earlier";
+type SessionGroup = { key: SessionGroupKey; label: string; sessions: ChatSession[] };
+
+function startOfDay(value: number) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function getSessionGroupKey(lastActive: number): SessionGroupKey {
+  const today = startOfDay(Date.now());
+  const day = startOfDay(lastActive);
+  const diff = today - day;
+  if (diff <= 0) return "today";
+  if (diff <= 24 * 60 * 60 * 1000) return "yesterday";
+  return "earlier";
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
@@ -646,13 +868,48 @@ export default function App() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [pendingClearOpen, setPendingClearOpen] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const scrollRef    = useRef<HTMLDivElement>(null);
   const textareaRef  = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<ISpeechRecognition | null>(null);
   const abortRef     = useRef<AbortController | null>(null);
   const messageCopyResetRef = useRef<number | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const toastTimersRef = useRef<Record<string, number>>({});
   const backendState = backendLabels[backendStatus];
+
+  const dismissToast = useCallback((id: string) => {
+    const timer = toastTimersRef.current[id];
+    if (timer) window.clearTimeout(timer);
+    delete toastTimersRef.current[id];
+    setToasts(prev => prev.filter(toast => toast.id !== id));
+  }, []);
+
+  const pushToast = useCallback((payload: ToastPayload) => {
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const variant = payload.variant ?? "info";
+    const toast: ToastMessage = { ...payload, id, variant };
+    const duration = variant === "error" ? 5200 : 2600;
+
+    setToasts(prev => [toast, ...prev].slice(0, 4));
+    toastTimersRef.current[id] = window.setTimeout(() => dismissToast(id), duration);
+  }, [dismissToast]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      pushToast((event as CustomEvent<ToastPayload>).detail);
+    };
+    window.addEventListener(TOAST_EVENT, handler);
+    return () => window.removeEventListener(TOAST_EVENT, handler);
+  }, [pushToast]);
+
+  useEffect(() => () => {
+    Object.values(toastTimersRef.current).forEach(timer => window.clearTimeout(timer));
+  }, []);
 
   // Mobile sidebar overlay detection
   useEffect(() => {
@@ -674,6 +931,38 @@ export default function App() {
     const root = document.documentElement;
     Object.entries(themes[theme]).forEach(([k, v]) => root.style.setProperty(k, v));
   }, [theme]);
+
+  useEffect(() => {
+    if (!renamingSessionId) return;
+    requestAnimationFrame(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    });
+  }, [renamingSessionId]);
+
+  const historyGroups = useMemo<SessionGroup[]>(() => {
+    const query = historyQuery.trim().toLowerCase();
+    const filtered = sessions
+      .filter(session => {
+        if (!query) return true;
+        return session.title.toLowerCase().includes(query)
+          || session.messages.some(message => message.text.toLowerCase().includes(query));
+      })
+      .slice()
+      .sort((a, b) => b.lastActive - a.lastActive);
+
+    const groups: SessionGroup[] = [
+      { key: "today", label: "Сегодня", sessions: [] },
+      { key: "yesterday", label: "Вчера", sessions: [] },
+      { key: "earlier", label: "Ранее", sessions: [] },
+    ];
+    filtered.forEach(session => {
+      groups.find(group => group.key === getSessionGroupKey(session.lastActive))?.sessions.push(session);
+    });
+    return groups.filter(group => group.sessions.length > 0);
+  }, [historyQuery, sessions]);
+
+  const hasHistoryResults = historyGroups.some(group => group.sessions.length > 0);
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -726,14 +1015,36 @@ export default function App() {
 
   const confirmDeleteSession = useCallback(() => {
     if (!pendingDeleteId) return;
+    const title = sessions.find(s => s.id === pendingDeleteId)?.title;
     deleteSession(pendingDeleteId);
     setPendingDeleteId(null);
-  }, [deleteSession, pendingDeleteId]);
+    pushToast({ title: "Чат удалён", detail: title, variant: "success" });
+  }, [deleteSession, pendingDeleteId, pushToast, sessions]);
 
   const confirmClearCurrentChat = useCallback(() => {
     updateMessages(activeId, []);
     setPendingClearOpen(false);
-  }, [activeId, updateMessages]);
+    pushToast({ title: "Чат очищен", variant: "success" });
+  }, [activeId, pushToast, updateMessages]);
+
+  const startRenameSession = useCallback((session: ChatSession) => {
+    setRenamingSessionId(session.id);
+    setRenameValue(session.title);
+  }, []);
+
+  const cancelRenameSession = useCallback(() => {
+    setRenamingSessionId(null);
+    setRenameValue("");
+  }, []);
+
+  const saveRenameSession = useCallback(() => {
+    if (!renamingSessionId) return;
+    const title = renameValue.trim() || NEW_CHAT_TITLE;
+    updateSession(renamingSessionId, { title });
+    setRenamingSessionId(null);
+    setRenameValue("");
+    pushToast({ title: "Название обновлено", detail: title, variant: "success" });
+  }, [pushToast, renameValue, renamingSessionId, updateSession]);
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort();
@@ -839,6 +1150,7 @@ export default function App() {
       } else {
         setBackendStatus("offline");
         const errMsg = err instanceof Error ? err.message : "Неизвестная ошибка сети";
+        pushToast({ title: "Ошибка запроса", detail: errMsg, variant: "error" });
         setSessions(prev => prev.map(s =>
           s.id === sessionId
             ? { ...s, messages: s.messages.map(m =>
@@ -853,7 +1165,7 @@ export default function App() {
       setIsTyping(false);
       abortRef.current = null;
     }
-  }, []);
+  }, [pushToast]);
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -891,10 +1203,12 @@ export default function App() {
 
     try {
       await copyToClipboard(msg.text);
+      pushToast({ title: "Сообщение скопировано", variant: "success" });
     } catch {
       messageCopyResetRef.current = window.setTimeout(() => setCopiedMessageId(null), 700);
+      pushToast({ title: "Не удалось скопировать", detail: "Попробуй выделить текст вручную.", variant: "error" });
     }
-  }, []);
+  }, [pushToast]);
 
   const handleDeleteMessage = useCallback((messageId: string) => {
     const latestMessage = messages[messages.length - 1];
@@ -905,7 +1219,8 @@ export default function App() {
         ? { ...s, messages: s.messages.filter(m => m.id !== messageId), lastActive: Date.now() }
         : s
     ));
-  }, [activeId, handleStop, isTyping, messages]);
+    pushToast({ title: "Сообщение удалено", variant: "success" });
+  }, [activeId, handleStop, isTyping, messages, pushToast]);
 
   const handleEditMessage = useCallback((msg: Message) => {
     if (isTyping) return;
@@ -959,6 +1274,13 @@ export default function App() {
     setIsListening(true);
   }, [isListening]);
 
+  const handleModelChange = useCallback((modelId: string) => {
+    if (modelId === selectedModel) return;
+    const model = MODELS.find(m => m.id === modelId) ?? MODELS[0];
+    setSelectedModel(modelId);
+    pushToast({ title: "Модель переключена", detail: model.tag, variant: "info" });
+  }, [pushToast, selectedModel]);
+
   const currentModel = MODELS.find(m => m.id === selectedModel) ?? MODELS[0];
   const currentLogoUrl = theme === "light" ? moonLogoLightUrl : moonLogoUrl;
   const sidebarBody = (
@@ -981,26 +1303,113 @@ export default function App() {
       </div>
 
       <div className="moon-sessions">
-        <p className="moon-sessions-label">История</p>
-        {sessions.map(sess => (
-          <motion.div
-            key={sess.id}
-            className={`moon-session-item ${sess.id === activeId ? "active" : ""}`}
-            onClick={() => { setActiveId(sess.id); if (sidebarOverlay) setIsSidebarOpen(false); }}
-            whileHover={{ x: 3 }}
-            transition={{ duration: 0.12 }}
-          >
-            <ChevronRight size={11} className="moon-session-arrow" />
-            <span className="moon-session-title">{sess.title}</span>
-            <button
-              className="moon-session-del"
-              onClick={e => { e.stopPropagation(); setPendingDeleteId(sess.id); }}
-              title="Удалить чат"
-            >
-              <X size={11} />
-            </button>
-          </motion.div>
-        ))}
+        <div className="moon-sessions-head">
+          <p className="moon-sessions-label">История</p>
+          <span>{sessions.length}</span>
+        </div>
+        <label className="moon-history-search">
+          <Search size={13} />
+          <input
+            type="search"
+            value={historyQuery}
+            onChange={e => setHistoryQuery(e.target.value)}
+            placeholder="Поиск чатов"
+          />
+        </label>
+
+        <div className="moon-session-list">
+          {hasHistoryResults ? (
+            historyGroups.map(group => (
+              <div key={group.key} className="moon-session-group">
+                <div className="moon-session-group-title">{group.label}</div>
+                {group.sessions.map(sess => {
+                  const isRenaming = renamingSessionId === sess.id;
+                  return (
+                    <motion.div
+                      key={sess.id}
+                      className={`moon-session-item ${sess.id === activeId ? "active" : ""} ${isRenaming ? "renaming" : ""}`}
+                      onClick={() => {
+                        if (isRenaming) return;
+                        setActiveId(sess.id);
+                        if (sidebarOverlay) setIsSidebarOpen(false);
+                      }}
+                      whileHover={isRenaming ? undefined : { x: 3 }}
+                      transition={{ duration: 0.12 }}
+                    >
+                      <ChevronRight size={11} className="moon-session-arrow" />
+                      {isRenaming ? (
+                        <input
+                          ref={renameInputRef}
+                          className="moon-session-rename"
+                          value={renameValue}
+                          onChange={e => setRenameValue(e.target.value)}
+                          onClick={e => e.stopPropagation()}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") saveRenameSession();
+                            if (e.key === "Escape") cancelRenameSession();
+                          }}
+                        />
+                      ) : (
+                        <span className="moon-session-title">{sess.title}</span>
+                      )}
+                      <div className="moon-session-actions">
+                        {isRenaming ? (
+                          <>
+                            <button
+                              type="button"
+                              className="moon-session-action confirm"
+                              onClick={e => { e.stopPropagation(); saveRenameSession(); }}
+                              title="Сохранить название"
+                              aria-label="Сохранить название"
+                            >
+                              <Check size={11} />
+                            </button>
+                            <button
+                              type="button"
+                              className="moon-session-action"
+                              onClick={e => { e.stopPropagation(); cancelRenameSession(); }}
+                              title="Отменить"
+                              aria-label="Отменить"
+                            >
+                              <X size={11} />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="moon-session-action"
+                              onClick={e => { e.stopPropagation(); startRenameSession(sess); }}
+                              title="Переименовать чат"
+                              aria-label="Переименовать чат"
+                            >
+                              <Pencil size={11} />
+                            </button>
+                            <button
+                              type="button"
+                              className="moon-session-action danger"
+                              onClick={e => { e.stopPropagation(); setPendingDeleteId(sess.id); }}
+                              title="Удалить чат"
+                              aria-label="Удалить чат"
+                            >
+                              <X size={11} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            ))
+          ) : (
+            <div className="moon-sessions-empty">
+              <Search size={16} />
+              <span>{historyQuery.trim() ? "Ничего не найдено" : "История пуста"}</span>
+              <small>{historyQuery.trim() ? "Попробуй другой запрос" : "Создай новый чат, и он появится здесь"}</small>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="moon-sidebar-foot">
@@ -1408,7 +1817,7 @@ export default function App() {
                   </button>
 
                   <div className="moon-input-actions">
-                    <ModelSelector selected={selectedModel} onChange={setSelectedModel} />
+                    <ModelSelector selected={selectedModel} onChange={handleModelChange} />
 
                     <button
                       className={`moon-input-side-btn ${isListening ? "active-voice" : ""}`}
@@ -1436,6 +1845,7 @@ export default function App() {
             </div>
           </footer>
         </div>
+        <ToastViewport toasts={toasts} onDismiss={dismissToast} />
       </div>
     </>
   );
@@ -1662,23 +2072,97 @@ const CSS = `
   .moon-new-chat:hover { background: var(--accent-hover); box-shadow: 0 6px 20px var(--accent-dim); }
   .moon-new-chat:active { transform: scale(0.97); }
 
-  .moon-sessions { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
+  .moon-sessions {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 8px 8px;
+    min-height: 0;
+  }
+  .moon-sessions-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 8px 7px;
+  }
   .moon-sessions-label {
     font-size: 10px; font-weight: 700; letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--text-muted);
-    padding: 12px 8px 7px;
+  }
+  .moon-sessions-head span {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+  .moon-history-search {
+    height: 34px;
+    display: flex; align-items: center; gap: 7px;
+    margin: 0 6px 10px;
+    padding: 0 9px;
+    border-radius: 11px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-base) 76%, var(--bg-elevated));
+    color: var(--text-muted);
+    transition: all var(--transition);
+  }
+  .moon-history-search:focus-within {
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+  .moon-history-search input {
+    width: 100%;
+    min-width: 0;
+    border: none;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: var(--text-primary);
+    font-family: var(--font);
+    font-size: 12.5px;
+  }
+  .moon-history-search input::-webkit-search-decoration,
+  .moon-history-search input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+  }
+  .moon-history-search input::placeholder { color: var(--text-muted); }
+  .moon-session-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .moon-session-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .moon-session-group-title {
+    padding: 0 8px 2px;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 750;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
   .moon-session-item {
     display: flex; align-items: center; gap: 7px;
-    padding: 8px 9px;
+    min-height: 40px;
+    padding: 7px 7px 7px 9px;
     border-radius: var(--radius-sm);
     cursor: pointer;
     border: 1px solid transparent;
     transition: all var(--transition);
     position: relative;
+    min-width: 0;
   }
   .moon-session-item:hover { background: var(--accent-dim); border-color: var(--border); }
   .moon-session-item.active { background: var(--accent-dim); border-color: var(--accent); }
+  .moon-session-item.renaming {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+    cursor: default;
+  }
   .moon-session-arrow {
     color: var(--text-muted);
     flex-shrink: 0;
@@ -1690,15 +2174,121 @@ const CSS = `
     flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .moon-session-item.active .moon-session-title { color: var(--text-primary); font-weight: 500; }
-  .moon-session-del {
-    background: none; border: none; cursor: pointer;
-    color: var(--text-muted); opacity: 0;
-    padding: 3px; border-radius: 5px;
-    transition: opacity var(--transition), color var(--transition);
-    display: flex; flex-shrink: 0;
+  .moon-session-rename {
+    flex: 1;
+    min-width: 0;
+    height: 26px;
+    border: none;
+    outline: none;
+    border-radius: 8px;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-family: var(--font);
+    font-size: 13px;
+    padding: 0 7px;
   }
-  .moon-session-item:hover .moon-session-del { opacity: 1; }
-  .moon-session-del:hover { color: #f87171; }
+  .moon-session-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity var(--transition);
+  }
+  .moon-session-item:hover .moon-session-actions,
+  .moon-session-item.active .moon-session-actions,
+  .moon-session-item.renaming .moon-session-actions,
+  .moon-session-actions:focus-within {
+    opacity: 1;
+  }
+  .moon-session-action {
+    width: 18px;
+    height: 18px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
+    color: color-mix(in srgb, var(--text-secondary) 78%, var(--text-primary));
+    appearance: none;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+  .moon-session-action svg {
+    width: 10px;
+    height: 10px;
+    min-width: 10px;
+    display: block;
+    stroke-width: 2.4;
+  }
+  .moon-session-item.active .moon-session-action {
+    color: color-mix(in srgb, var(--accent) 82%, var(--text-primary));
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface));
+    border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+  .moon-session-action:hover {
+    color: var(--accent);
+    background: var(--accent-dim);
+    border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  }
+  .moon-session-action.confirm:hover {
+    color: var(--green);
+    background: color-mix(in srgb, var(--green) 12%, transparent);
+  }
+  .moon-session-action.danger:hover {
+    color: #f87171;
+    background: rgba(248,113,113,0.1);
+  }
+  .theme-light .moon-history-search {
+    background: #f4f6f8;
+    border-color: #d8dee6;
+  }
+  .theme-light .moon-history-search:focus-within {
+    background: #fff;
+  }
+  .theme-light .moon-session-action {
+    color: #4f46e5;
+    background: rgba(99,102,241,0.08);
+    border-color: rgba(99,102,241,0.16);
+  }
+  .theme-light .moon-session-item.active .moon-session-action {
+    color: #4338ca;
+    background: rgba(99,102,241,0.14);
+    border-color: rgba(99,102,241,0.24);
+  }
+  .theme-light .moon-session-action.danger {
+    color: #dc2626;
+    background: rgba(248,113,113,0.08);
+    border-color: rgba(248,113,113,0.16);
+  }
+  .moon-sessions-empty {
+    margin: 18px 8px 0;
+    min-height: 118px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    text-align: center;
+    border: 1px dashed var(--border);
+    border-radius: 14px;
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--bg-elevated) 52%, transparent);
+  }
+  .moon-sessions-empty span {
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 650;
+  }
+  .moon-sessions-empty small {
+    max-width: 170px;
+    font-size: 11px;
+    line-height: 1.4;
+  }
 
   .moon-confirm-backdrop {
     position: fixed;
@@ -1775,6 +2365,97 @@ const CSS = `
   .moon-confirm-delete:hover {
     background: #dc2626;
     transform: translateY(-1px);
+  }
+
+  .moon-toast-viewport {
+    position: fixed;
+    right: 18px;
+    bottom: 94px;
+    z-index: 80;
+    width: min(340px, calc(100vw - 28px));
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    pointer-events: none;
+  }
+  .moon-toast {
+    pointer-events: auto;
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) 24px;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+    box-shadow: 0 18px 46px rgba(0,0,0,0.28);
+    backdrop-filter: blur(14px);
+  }
+  .moon-toast-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    background: var(--accent-dim);
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  .moon-toast.success .moon-toast-icon {
+    color: var(--green);
+    background: color-mix(in srgb, var(--green) 13%, transparent);
+    border-color: color-mix(in srgb, var(--green) 28%, transparent);
+  }
+  .moon-toast.error .moon-toast-icon {
+    color: #f87171;
+    background: rgba(248,113,113,0.11);
+    border-color: rgba(248,113,113,0.28);
+  }
+  .moon-toast.warning .moon-toast-icon {
+    color: #fbbf24;
+    background: rgba(251,191,36,0.12);
+    border-color: rgba(251,191,36,0.3);
+  }
+  .moon-toast-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .moon-toast-copy strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    line-height: 1.25;
+    letter-spacing: 0;
+  }
+  .moon-toast-copy span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    line-height: 1.25;
+  }
+  .moon-toast-close {
+    width: 24px;
+    height: 24px;
+    border: 0;
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    background: transparent;
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+  .moon-toast-close:hover {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   }
 
   .moon-sidebar-foot {
@@ -2411,19 +3092,43 @@ const CSS = `
 
   /* ── Code blocks ── */
   .moon-code-block {
-    border-radius: var(--radius-md); overflow: hidden;
+    border-radius: var(--radius-md);
+    overflow: hidden;
     border: 1px solid var(--border); margin: 8px 0;
     font-family: var(--font-mono);
   }
   .moon-code-header {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 7px 14px; background: var(--bg-elevated);
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 7px 10px 7px 14px; background: var(--bg-elevated);
     border-bottom: 1px solid var(--border);
+  }
+  .moon-code-title {
+    min-width: 0;
+    display: flex; align-items: center; gap: 7px;
   }
   .moon-code-lang {
     font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
     text-transform: uppercase; color: var(--accent);
   }
+  .moon-code-auto {
+    padding: 1px 4px;
+    border-radius: 999px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    font-family: var(--font);
+    font-size: 5px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1.4;
+    text-transform: uppercase;
+  }
+  .moon-code-actions {
+    display: flex; align-items: center; gap: 6px;
+    flex-shrink: 0;
+  }
+  .moon-code-wrap,
   .moon-code-copy {
     display: flex; align-items: center; gap: 5px;
     background: var(--accent-dim);
@@ -2433,6 +3138,17 @@ const CSS = `
     font-size: 11px; font-weight: 700; font-family: var(--font);
     padding: 4px 9px; border-radius: 999px; transition: all var(--transition);
   }
+  .moon-code-wrap {
+    background: color-mix(in srgb, var(--bg-base) 76%, transparent);
+    border-color: var(--border);
+    color: var(--text-secondary);
+  }
+  .moon-code-wrap.active {
+    color: var(--accent);
+    background: var(--accent-dim);
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  }
+  .moon-code-wrap:hover,
   .moon-code-copy:hover {
     background: color-mix(in srgb, var(--accent) 20%, transparent);
     border-color: var(--accent);
@@ -2445,7 +3161,40 @@ const CSS = `
   }
   .moon-code-pre {
     background: var(--bg-base); padding: 16px; overflow-x: auto;
-    font-size: 13px; line-height: 1.65; color: var(--accent-hover);
+    font-size: 13px; line-height: 1.65; color: var(--text-primary);
+    white-space: pre;
+    tab-size: 2;
+  }
+  .moon-code-pre code {
+    min-width: max-content;
+    display: block;
+  }
+  .moon-code-pre.wrapped {
+    overflow-x: hidden;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .moon-code-pre.wrapped code {
+    min-width: 0;
+    white-space: inherit;
+  }
+  .moon-code-token.comment { color: #7c8798; font-style: italic; }
+  .moon-code-token.keyword { color: #a78bfa; font-weight: 700; }
+  .moon-code-token.string { color: #34d399; }
+  .moon-code-token.key { color: #60a5fa; }
+  .moon-code-token.number { color: #fbbf24; }
+  .moon-code-token.literal { color: #f87171; font-weight: 650; }
+  .moon-code-token.builtin { color: #22d3ee; }
+  .moon-code-token.function { color: #93c5fd; }
+  .moon-code-token.punctuation { color: color-mix(in srgb, var(--text-secondary) 78%, var(--text-primary)); }
+  .theme-light .moon-code-token.comment { color: #6b7280; }
+  .theme-light .moon-code-token.keyword { color: #7c3aed; }
+  .theme-light .moon-code-token.string { color: #047857; }
+  .theme-light .moon-code-token.key { color: #2563eb; }
+  .theme-light .moon-code-token.number { color: #b45309; }
+  .theme-light .moon-code-token.literal { color: #dc2626; }
+  .theme-light .moon-code-token.builtin { color: #0891b2; }
+  .theme-light .moon-code-token.function { color: #1d4ed8; }
   }
 
   /* ── Markdown ── */
@@ -2542,6 +3291,13 @@ const CSS = `
     .moon-footer-hint { display: none; }
     .moon-model-trigger { max-width: 104px; height: 32px; padding: 0 8px; font-size: 11px; }
     .moon-model-option .moon-model-chip-tag { display: none; }
+    .moon-toast-viewport {
+      left: 12px;
+      right: 12px;
+      bottom: 90px;
+      width: auto;
+    }
+    .moon-toast { border-radius: 14px; }
   }
 
   /* Safe area for notched phones */
