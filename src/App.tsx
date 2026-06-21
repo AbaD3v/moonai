@@ -2063,13 +2063,18 @@ const CSS = `
     --font-mono: 'Geist Mono', 'Fira Code', monospace;
   }
 
-  html, body, #root { height: 100%; overflow: hidden; }
+  html, body, #root {
+    height: 100%;
+    min-height: 100%;
+    overflow: hidden;
+  }
 
   .moon-app {
     display: grid;
     grid-template-columns: 265px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
     height: 100vh;
+    height: 100dvh;
     overflow: hidden;
     font-family: var(--font);
     background: var(--bg-base);
@@ -3158,6 +3163,9 @@ const CSS = `
     padding: 14px 18px 18px;
     background: linear-gradient(to top, var(--bg-base) 65%, transparent);
     flex-shrink: 0;
+    position: sticky;
+    bottom: 0;
+    z-index: 12;
   }
   .moon-input-wrap { max-width: 780px; margin: 0 auto; position: relative; }
   .moon-input-box {
@@ -3547,7 +3555,13 @@ const CSS = `
 
   /* ── Mobile ── */
   @media (max-width: 760px) {
-    .moon-app { position: relative; }
+    .moon-app {
+      position: relative;
+      height: 100svh;
+      height: 100dvh;
+      min-height: -webkit-fill-available;
+      grid-template-rows: minmax(0, 1fr);
+    }
     .moon-sidebar {
       position: fixed;
       inset: 0 auto 0 0;
@@ -3555,7 +3569,7 @@ const CSS = `
       box-shadow: 20px 0 50px rgba(0,0,0,0.35);
       z-index: 22;
     }
-    .moon-main { width: 100%; min-height: 0; }
+    .moon-main { width: 100%; height: 100%; min-height: 0; }
     .moon-header { height: 52px; padding: 0 12px; gap: 7px; }
     .moon-header-left { gap: 7px; min-width: 0; }
     .moon-header-right { gap: 6px; }
@@ -3584,6 +3598,7 @@ const CSS = `
     .moon-msg-action { width: 28px; height: 28px; }
     .moon-footer { padding: 10px 12px 14px; }
     .moon-input-box { border-radius: 18px; padding: 6px; }
+    .moon-textarea { max-height: 112px; }
     .moon-input-toolbar { gap: 6px; }
     .moon-send-btn { width: 36px; height: 36px; }
     .moon-send-icon { width: 19px; height: 19px; min-width: 19px; }
@@ -3613,7 +3628,7 @@ const CSS = `
   /* Safe area for notched phones */
   @supports (padding-bottom: env(safe-area-inset-bottom)) {
     .moon-footer {
-      padding-bottom: max(18px, env(safe-area-inset-bottom));
+      padding-bottom: calc(14px + env(safe-area-inset-bottom));
     }
   }
 `;
