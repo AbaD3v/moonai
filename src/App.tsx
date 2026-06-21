@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowUp, Bot, User, PanelLeft, Plus,
   Copy, Check, Mic, Sun, Moon, Zap, Upload, RotateCcw, Pencil,
-  FileText, X, ChevronDown, CircleStop, Trash2, ChevronRight, Search
+  FileText, X, ChevronDown, CircleStop, Trash2, ChevronRight, Search, SlidersHorizontal
 } from "lucide-react";
 import moonLogoUrl from "./assets/MoonAILogo.png";
 import moonLogoLightUrl from "./assets/MoonAILogoWhite.png";
@@ -51,6 +51,15 @@ interface ChatSession {
   messages: Message[];
   lastActive: number;
   modelId?: string;
+  settings?: BotSettings;
+}
+
+interface BotSettings {
+  systemPrompt: string;
+  temperature: number;
+  maxTokens: number;
+  topK: number;
+  repetitionPenalty: number;
 }
 
 interface UploadedFile {
@@ -78,26 +87,38 @@ interface ModelDef {
   name: string;
   tag: string;
   endpoint: string;
+  baseUrl?: string;
   description: string;
   color: string;
 }
 
+const MOONAI_150M_API_URL = ((import.meta.env.VITE_MOONAI_150M_API_URL as string | undefined) ?? "https://abad3v-moonai-v1-0-150m.hf.space").replace(/\/$/, "");
+
 const MODELS: ModelDef[] = [
   {
-    id: "moonai-700m-v2",
-    name: "MoonAI-v2",
-    tag: "v2 · latest",
+    id: "moonai-700m-v1.2",
+    name: "MoonAI-v1.2",
+    tag: "v1.2 · latest",
     endpoint: "/chat",
-    description: "Последняя версия",
+    description: "Самая последняя версия",
     color: "#6366f1",
   },
   {
-    id: "moonai-700m-v1",
-    name: "MoonAI-v1",
-    tag: "v1 · base",
+    id: "moonai-700m-v1.1",
+    name: "MoonAI-v1.1",
+    tag: "v1.1 · stable",
     endpoint: "/chat_v1",
-    description: "Стабильная версия",
+    description: "Самая стабильная версия",
     color: "#a78bfa",
+  },
+  {
+    id: "moonai-150m-v1.0",
+    name: "MoonAI-150M",
+    tag: "150M V1.0 · fast",
+    endpoint: "/chat",
+    baseUrl: MOONAI_150M_API_URL,
+    description: "Самая быстрая модель",
+    color: "#14b8a6",
   },
 ];
 
@@ -652,6 +673,7 @@ function ModelSelector({ selected, onChange }: { selected: string; onChange: (id
                 <span className="moon-model-option-copy">
                   <span className="moon-model-chip-name">{m.name}</span>
                   <span className="moon-model-chip-tag">{m.tag}</span>
+                  <span className="moon-model-chip-description">{m.description}</span>
                 </span>
                 {selected === m.id && <Check size={14} />}
               </button>
@@ -664,6 +686,112 @@ function ModelSelector({ selected, onChange }: { selected: string; onChange: (id
 }
 
 // ─── Theme Toggle ─────────────────────────────────────────────────────────────
+function BotSettingsPanel({
+  settings,
+  open,
+  onOpenChange,
+  onChange,
+}: {
+  settings: BotSettings;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChange: (patch: Partial<BotSettings>) => void;
+}) {
+  const updateNumber = (key: keyof Pick<BotSettings, "temperature" | "maxTokens" | "topK" | "repetitionPenalty">, value: string) => {
+    onChange({ [key]: Number(value) } as Partial<BotSettings>);
+  };
+
+  return (
+    <div className="moon-bot-settings">
+      <button
+        type="button"
+        className={`moon-input-side-btn moon-settings-trigger ${open ? "active" : ""}`}
+        onClick={() => onOpenChange(!open)}
+        title="Параметры бота"
+        aria-label="Параметры бота"
+      >
+        <SlidersHorizontal size={16} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            className="moon-settings-panel"
+            initial={{ opacity: 0, y: 6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.98 }}
+            transition={{ duration: 0.14 }}
+          >
+            <div className="moon-settings-head">
+              <span>Поведение</span>
+              <button type="button" onClick={() => onOpenChange(false)} aria-label="Закрыть">
+                <X size={13} />
+              </button>
+            </div>
+
+            <label className="moon-settings-field wide">
+              <span>Системный промпт</span>
+              <textarea
+                value={settings.systemPrompt}
+                onChange={e => onChange({ systemPrompt: e.target.value })}
+                rows={3}
+              />
+            </label>
+
+            <label className="moon-settings-field">
+              <span>Temperature <b>{settings.temperature.toFixed(2)}</b></span>
+              <input
+                type="range"
+                min="0"
+                max="1.5"
+                step="0.05"
+                value={settings.temperature}
+                onChange={e => updateNumber("temperature", e.target.value)}
+              />
+            </label>
+
+            <label className="moon-settings-field">
+              <span>Max tokens <b>{settings.maxTokens}</b></span>
+              <input
+                type="range"
+                min="32"
+                max="512"
+                step="16"
+                value={settings.maxTokens}
+                onChange={e => updateNumber("maxTokens", e.target.value)}
+              />
+            </label>
+
+            <label className="moon-settings-field">
+              <span>Top K <b>{settings.topK}</b></span>
+              <input
+                type="range"
+                min="1"
+                max="100"
+                step="1"
+                value={settings.topK}
+                onChange={e => updateNumber("topK", e.target.value)}
+              />
+            </label>
+
+            <label className="moon-settings-field">
+              <span>Repeat penalty <b>{settings.repetitionPenalty.toFixed(2)}</b></span>
+              <input
+                type="range"
+                min="1"
+                max="2"
+                step="0.05"
+                value={settings.repetitionPenalty}
+                onChange={e => updateNumber("repetitionPenalty", e.target.value)}
+              />
+            </label>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 function ThemeToggle({ current, onChange }: { current: Theme; onChange: (t: Theme) => void }) {
   const [open, setOpen] = useState(false);
   const options: { id: Theme; label: string; icon: React.ReactNode }[] = [
@@ -788,9 +916,18 @@ function ToastViewport({ toasts, onDismiss }: { toasts: ToastMessage[]; onDismis
 const STORAGE_KEY = "moonai_sessions";
 const THEME_KEY   = "moonai_theme";
 const MODEL_KEY   = "moonai_model";
+const USER_SETTINGS_KEY = "moonai_user_settings";
 const NEW_CHAT_TITLE = "Новый чат";
 const DEFAULT_API_URL = "https://abad3v-moonai-backend-730m.hf.space";
 const API_URL = ((import.meta.env.VITE_MOONAI_API_URL as string | undefined) ?? DEFAULT_API_URL).replace(/\/$/, "");
+const DEFAULT_SYSTEM_PROMPT = "Ты MoonAI - умный ассистент. Отвечай в Markdown-разметке.";
+const DEFAULT_BOT_SETTINGS: BotSettings = {
+  systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  temperature: 0.35,
+  maxTokens: 200,
+  topK: 30,
+  repetitionPenalty: 1.25,
+};
 
 const suggestedPrompts = [
   "Объясни этот код простыми словами",
@@ -813,14 +950,48 @@ function loadSessions(): ChatSession[] {
     return parsed.map(session => ({
       ...session,
       messages: session.messages.filter(m => m.id !== "welcome"),
+      settings: normalizeBotSettings(session.settings),
     }));
   } catch { return []; }
 }
 function saveSessions(sessions: ChatSession[]) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions)); } catch {}
 }
+function loadUserSettings(): BotSettings {
+  try {
+    const raw = localStorage.getItem(USER_SETTINGS_KEY);
+    return normalizeBotSettings(raw ? JSON.parse(raw) : undefined);
+  } catch { return DEFAULT_BOT_SETTINGS; }
+}
+function saveUserSettings(settings: BotSettings) {
+  try { localStorage.setItem(USER_SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+}
+function clampNumber(value: unknown, min: number, max: number, fallback: number) {
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(max, Math.max(min, num));
+}
+function normalizeBotSettings(settings?: Partial<BotSettings>): BotSettings {
+  const systemPrompt = typeof settings?.systemPrompt === "string" && settings.systemPrompt.trim()
+    ? settings.systemPrompt
+    : DEFAULT_SYSTEM_PROMPT;
+  return {
+    systemPrompt,
+    temperature: clampNumber(settings?.temperature, 0, 1.5, DEFAULT_BOT_SETTINGS.temperature),
+    maxTokens: Math.round(clampNumber(settings?.maxTokens, 32, 512, DEFAULT_BOT_SETTINGS.maxTokens)),
+    topK: Math.round(clampNumber(settings?.topK, 1, 100, DEFAULT_BOT_SETTINGS.topK)),
+    repetitionPenalty: clampNumber(settings?.repetitionPenalty, 1, 2, DEFAULT_BOT_SETTINGS.repetitionPenalty),
+  };
+}
 function makeSession(id: string): ChatSession {
-  return { id, title: NEW_CHAT_TITLE, lastActive: Date.now(), messages: [] };
+  return {
+    id,
+    title: NEW_CHAT_TITLE,
+    lastActive: Date.now(),
+    messages: [],
+    modelId: localStorage.getItem(MODEL_KEY) ?? MODELS[0].id,
+    settings: loadUserSettings(),
+  };
 }
 
 type SessionGroupKey = "today" | "yesterday" | "earlier";
@@ -854,6 +1025,8 @@ export default function App() {
 
   const activeSession = sessions.find(s => s.id === activeId) ?? sessions[0];
   const messages = activeSession?.messages ?? [];
+  const activeSettings = normalizeBotSettings(activeSession?.settings);
+  const activeModelId = activeSession?.modelId ?? selectedModel;
 
   const [input, setInput] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth > 760);
@@ -869,6 +1042,7 @@ export default function App() {
   const [pendingClearOpen, setPendingClearOpen] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [historyQuery, setHistoryQuery] = useState("");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -982,6 +1156,11 @@ export default function App() {
   const updateMessages = useCallback((id: string, msgs: Message[]) => {
     updateSession(id, { messages: msgs, lastActive: Date.now() });
   }, [updateSession]);
+  const updateActiveSettings = useCallback((patch: Partial<BotSettings>) => {
+    const nextSettings = normalizeBotSettings({ ...activeSettings, ...patch });
+    updateSession(activeId, { settings: nextSettings, lastActive: Date.now() });
+    saveUserSettings(nextSettings);
+  }, [activeId, activeSettings, updateSession]);
 
   const useSuggestion = useCallback((text: string) => {
     setInput(text);
@@ -1056,9 +1235,11 @@ export default function App() {
     sessionId: string,
     text: string,
     modelId: string,
+    settings: BotSettings,
     insertAfterId?: string,
   ) => {
     const model = MODELS.find(m => m.id === modelId) ?? MODELS[0];
+    const requestSettings = normalizeBotSettings(settings);
     setIsTyping(true);
     setUserScrolled(false);
 
@@ -1091,10 +1272,18 @@ export default function App() {
     setBackendStatus("connecting");
 
     try {
-      const res = await fetch(`${API_URL}${model.endpoint}`, {
+      const modelBaseUrl = (model.baseUrl ?? API_URL).replace(/\/$/, "");
+      const res = await fetch(`${modelBaseUrl}${model.endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, max_tokens: 200, temperature: 0.35 }),
+        body: JSON.stringify({
+          text,
+          system_prompt: requestSettings.systemPrompt,
+          max_tokens: requestSettings.maxTokens,
+          temperature: requestSettings.temperature,
+          top_k: requestSettings.topK,
+          repetition_penalty: requestSettings.repetitionPenalty,
+        }),
         signal: abort.signal,
       });
 
@@ -1193,8 +1382,8 @@ export default function App() {
     setPendingFiles([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
 
-    await generateBotReply(sessionId, text, selectedModel, userMsg.id);
-  }, [input, isTyping, activeId, pendingFiles, selectedModel, generateBotReply]);
+    await generateBotReply(sessionId, text, activeModelId, activeSettings, userMsg.id);
+  }, [input, isTyping, activeId, pendingFiles, activeModelId, activeSettings, generateBotReply]);
 
   const handleCopyMessage = useCallback(async (msg: Message) => {
     setCopiedMessageId(msg.id);
@@ -1253,8 +1442,8 @@ export default function App() {
         : s
     ));
 
-    void generateBotReply(activeId, promptMsg.text, botMsg.modelId ?? selectedModel, promptMsg.id);
-  }, [activeId, generateBotReply, isTyping, selectedModel, sessions]);
+    void generateBotReply(activeId, promptMsg.text, botMsg.modelId ?? activeModelId, normalizeBotSettings(session.settings), promptMsg.id);
+  }, [activeId, activeModelId, generateBotReply, isTyping, sessions]);
 
   const toggleVoice = useCallback(() => {
     if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) return;
@@ -1275,13 +1464,14 @@ export default function App() {
   }, [isListening]);
 
   const handleModelChange = useCallback((modelId: string) => {
-    if (modelId === selectedModel) return;
+    if (modelId === activeModelId) return;
     const model = MODELS.find(m => m.id === modelId) ?? MODELS[0];
     setSelectedModel(modelId);
+    updateSession(activeId, { modelId, lastActive: Date.now() });
     pushToast({ title: "Модель переключена", detail: model.tag, variant: "info" });
-  }, [pushToast, selectedModel]);
+  }, [activeId, activeModelId, pushToast, updateSession]);
 
-  const currentModel = MODELS.find(m => m.id === selectedModel) ?? MODELS[0];
+  const currentModel = MODELS.find(m => m.id === activeModelId) ?? MODELS[0];
   const currentLogoUrl = theme === "light" ? moonLogoLightUrl : moonLogoUrl;
   const sidebarBody = (
     <motion.div
@@ -1817,7 +2007,13 @@ export default function App() {
                   </button>
 
                   <div className="moon-input-actions">
-                    <ModelSelector selected={selectedModel} onChange={handleModelChange} />
+                    <BotSettingsPanel
+                      settings={activeSettings}
+                      open={isSettingsOpen}
+                      onOpenChange={setIsSettingsOpen}
+                      onChange={updateActiveSettings}
+                    />
+                    <ModelSelector selected={activeModelId} onChange={handleModelChange} />
 
                     <button
                       className={`moon-input-side-btn ${isListening ? "active-voice" : ""}`}
@@ -2869,7 +3065,7 @@ const CSS = `
   .moon-model-option {
     width: 100%;
     display: flex; align-items: center; gap: 8px;
-    min-height: 42px;
+    min-height: 58px;
     padding: 8px 10px;
     border-radius: 12px;
     border: none;
@@ -2913,6 +3109,17 @@ const CSS = `
   .moon-model-chip-tag {
     font-size: 10px; opacity: 0.68; font-weight: 500;
     font-family: var(--font-mono);
+  }
+  .moon-model-chip-description {
+    margin-top: 2px;
+    font-size: 10.5px;
+    line-height: 1.25;
+    color: var(--text-muted);
+    white-space: normal;
+  }
+  .moon-model-option:hover .moon-model-chip-description,
+  .moon-model-option.active .moon-model-chip-description {
+    color: color-mix(in srgb, var(--chip-color, var(--accent)) 74%, var(--text-secondary));
   }
 
   /* ── Typing indicator ── */
@@ -3003,6 +3210,100 @@ const CSS = `
   .moon-input-side-btn:disabled { opacity: 0.35; cursor: not-allowed; }
   .moon-input-side-btn.disabled:hover,
   .moon-input-side-btn:disabled:hover { color: var(--text-muted); background: none; }
+  .moon-bot-settings {
+    position: relative;
+    flex-shrink: 0;
+  }
+  .moon-settings-trigger.active {
+    color: var(--accent);
+    background: var(--accent-dim);
+  }
+  .moon-settings-panel {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 10px);
+    z-index: 35;
+    width: min(340px, calc(100vw - 34px));
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--bg-elevated);
+    box-shadow: 0 18px 48px rgba(0,0,0,0.38);
+  }
+  .moon-settings-head {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 750;
+  }
+  .moon-settings-head button {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .moon-settings-head button:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .moon-settings-field {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 0;
+  }
+  .moon-settings-field.wide { grid-column: 1 / -1; }
+  .moon-settings-field span {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 650;
+  }
+  .moon-settings-field b {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 650;
+  }
+  .moon-settings-field textarea {
+    min-height: 78px;
+    max-height: 130px;
+    resize: vertical;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    outline: none;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-family: var(--font);
+    font-size: 12px;
+    line-height: 1.45;
+    padding: 9px;
+  }
+  .moon-settings-field textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+  .moon-settings-field input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
 
   .moon-send-btn {
     width: 36px; height: 36px; border-radius: 50%;
@@ -3289,8 +3590,17 @@ const CSS = `
     .moon-stop-icon { width: 16px; height: 16px; }
     .moon-scroll-btn { height: 30px; padding: 0 10px; font-size: 11px; }
     .moon-footer-hint { display: none; }
+    .moon-settings-panel {
+      right: -46px;
+      grid-template-columns: 1fr;
+      max-height: min(70vh, 440px);
+      overflow-y: auto;
+    }
     .moon-model-trigger { max-width: 104px; height: 32px; padding: 0 8px; font-size: 11px; }
+    .moon-model-menu { width: min(292px, calc(100vw - 24px)); }
+    .moon-model-option { min-height: 52px; padding: 8px; }
     .moon-model-option .moon-model-chip-tag { display: none; }
+    .moon-model-chip-description { font-size: 10px; line-height: 1.2; }
     .moon-toast-viewport {
       left: 12px;
       right: 12px;
