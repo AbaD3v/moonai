@@ -56,6 +56,7 @@ interface ChatSession {
 
 interface BotSettings {
   systemPrompt: string;
+  systemPromptEnabled: boolean;
   temperature: number;
   maxTokens: number;
   topK: number;
@@ -730,11 +731,23 @@ function BotSettingsPanel({
             </div>
 
             <label className="moon-settings-field wide">
-              <span>Системный промпт</span>
+              <span>
+                Системный промпт
+                <button
+                  type="button"
+                  className={`moon-settings-toggle ${settings.systemPromptEnabled ? "on" : "off"}`}
+                  onClick={() => onChange({ systemPromptEnabled: !settings.systemPromptEnabled })}
+                  title={settings.systemPromptEnabled ? "Выключить системный промпт" : "Включить системный промпт"}
+                >
+                  {settings.systemPromptEnabled ? "Вкл" : "Выкл"}
+                </button>
+              </span>
               <textarea
                 value={settings.systemPrompt}
                 onChange={e => onChange({ systemPrompt: e.target.value })}
                 rows={3}
+                disabled={!settings.systemPromptEnabled}
+                style={{ opacity: settings.systemPromptEnabled ? 1 : 0.4 }}
               />
             </label>
 
@@ -923,6 +936,7 @@ const API_URL = ((import.meta.env.VITE_MOONAI_API_URL as string | undefined) ?? 
 const DEFAULT_SYSTEM_PROMPT = "Ты MoonAI - умный ассистент. Отвечай в Markdown-разметке.";
 const DEFAULT_BOT_SETTINGS: BotSettings = {
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  systemPromptEnabled: true,
   temperature: 0.35,
   maxTokens: 200,
   topK: 30,
@@ -977,6 +991,7 @@ function normalizeBotSettings(settings?: Partial<BotSettings>): BotSettings {
     : DEFAULT_SYSTEM_PROMPT;
   return {
     systemPrompt,
+    systemPromptEnabled: settings?.systemPromptEnabled !== false,
     temperature: clampNumber(settings?.temperature, 0, 1.5, DEFAULT_BOT_SETTINGS.temperature),
     maxTokens: Math.round(clampNumber(settings?.maxTokens, 32, 512, DEFAULT_BOT_SETTINGS.maxTokens)),
     topK: Math.round(clampNumber(settings?.topK, 1, 100, DEFAULT_BOT_SETTINGS.topK)),
@@ -1278,7 +1293,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text,
-          system_prompt: requestSettings.systemPrompt,
+          system_prompt: requestSettings.systemPromptEnabled ? requestSettings.systemPrompt : null,
           max_tokens: requestSettings.maxTokens,
           temperature: requestSettings.temperature,
           top_k: requestSettings.topK,
@@ -3311,6 +3326,29 @@ const CSS = `
   .moon-settings-field input[type="range"] {
     width: 100%;
     accent-color: var(--accent);
+  }
+  .moon-settings-toggle {
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all var(--transition);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+  }
+  .moon-settings-toggle.on {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .moon-settings-toggle.off {
+    background: rgba(248,113,113,0.08);
+    border-color: rgba(248,113,113,0.3);
+    color: #f87171;
   }
 
   .moon-send-btn {
