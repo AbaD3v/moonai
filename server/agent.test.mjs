@@ -1,11 +1,66 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runAgent, executeTool, openAITransport } from './agent.mjs';
-import { createAgentServer } from './index.mjs';
+import { runAgent, executeTool, openAITransport, groqTransport } from './agent.mjs';
+import { createAgentServer, providerConfig } from './index.mjs';
+
+test('provider config selects separate keys and rejects unknown providers', () => {
+  assert.deepEqual(providerConfig({}), { provider: 'groq', apiKey: '', model: 'openai/gpt-oss-20b' });
+  assert.equal(providerConfig({ OPENAI_API_KEY: 'other-provider' }).apiKey, '');
+  assert.equal(providerConfig({ AGENT_PROVIDER: 'openai', GROQ_API_KEY: 'other-provider' }).apiKey, '');
+  assert.equal(providerConfig({ GROQ_API_KEY: 'groq-test' }).apiKey, 'groq-test');
+  assert.throws(() => providerConfig({ AGENT_PROVIDER: 'invalid' }));
+});
+
+test('Groq receives supported parameters and our real tool result on continuation', async () => {
+  let requests = 0;
+  const transport = groqTransport('groq-test-key', async (url, options) => {
+    assert.equal(url, 'https://api.groq.com/openai/v1/responses');
+    assert.equal(options.headers.Authorization, 'Bearer groq-test-key');
+    const body = JSON.parse(options.body);
+    assert.equal('include' in body, false);
+    assert.equal('store' in body, false);
+    assert.equal(body.tools[0].name, 'calculate');
+    if (requests++ === 0) return Response.json({ status: 'completed', output: [call()] });
+    assert.equal(JSON.parse(body.input.at(-1).output).result, 3600);
+    assert.equal(body.input.at(-1).call_id, 'c1');
+    return Response.json(final);
+  });
+  await run({ createResponse: transport });
+  assert.equal(requests, 2);
+});
 
 const final = { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'Итого 3960 ₸.' }] }] };
 const call = (args = { operation: 'multiply', a: 1200, b: 3 }, name = 'calculate') => ({ type: 'function_call', name, call_id: 'c1', arguments: JSON.stringify(args) });
 const run = options => runAgent({ goal: 'Билеты со сбором', model: 'test-model', signal: new AbortController().signal, emit: () => {}, ...options });
+
+test('repeated operation reuses result and allows the next operation', async () => {
+  let count = 0;
+  const events = [];
+  await run({ emit: e => events.push(e), createResponse: async body => {
+    count++;
+    if (count === 1) return { status: 'completed', output: [call({ operation: 'subtract', a: 6, b: 2 })] };
+    assert.match(body.instructions, /"result":4/);
+    if (count === 2) return { status: 'completed', output: [call({ b: 2, a: 6, operation: 'subtract' })] };
+    if (count === 3) {
+      assert.deepEqual(JSON.parse(body.input.at(-1).output), { result: 4, cached: true });
+      return { status: 'completed', output: [call({ operation: 'add', a: 4, b: 1 })] };
+    }
+    assert.equal(JSON.parse(body.input.at(-1).output).result, 5);
+    return { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: '5 яблок' }] }] };
+  } });
+  assert.equal(events.at(-1).text, '5 яблок');
+});
+
+test('persistent repetition stops early without presenting a partial result as final', async () => {
+  const events = [];
+  let count = 0;
+  await assert.rejects(run({ emit: e => events.push(e), createResponse: async () => {
+    count++;
+    return { status: 'completed', output: [call()] };
+  } }), /без прогресса/);
+  assert.equal(count, 3);
+  assert.equal(events.some(e => e.type === 'final'), false);
+});
 
 test('tool results and all model state return to Responses; real calculation reaches final', async () => {
   let requests = 0;
@@ -38,7 +93,7 @@ test('invalid tools and arguments cannot execute; model can correct an error', a
 
 test('bounded loops, cancellation, incomplete and empty answers are not success', async () => {
   let count = 0;
-  await assert.rejects(run({ createResponse: async () => { count++; return { status: 'completed', output: [call()] }; } }), /5 обращений/);
+  await assert.rejects(run({ createResponse: async () => { count++; return { status: 'completed', output: [call({ operation: 'add', a: count, b: 1 })] }; } }), /5 обращений/);
   assert.equal(count, 5);
   await assert.rejects(run({ createResponse: async () => ({ status: 'incomplete', output: [] }) }), /не завершила/);
   await assert.rejects(run({ createResponse: async () => ({ status: 'completed', output: [] }) }), /пустой/);

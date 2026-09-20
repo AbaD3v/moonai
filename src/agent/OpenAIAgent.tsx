@@ -6,7 +6,7 @@ const labels: Record<string, string> = { start: "Запуск", model: "Моде
 
 export function OpenAIAgent({ active }: { active: boolean }) {
   const [goal, setGoal] = useState("Рассчитай стоимость 3 билетов по 1200 ₸ и добавь 10% сервисного сбора.");
-  const [status, setStatus] = useState<{ configured: boolean; model: string | null } | null>(null);
+  const [status, setStatus] = useState<{ configured: boolean; model: string | null; providerLabel: string; setupMessage: string } | null>(null);
   const [connectionError, setConnectionError] = useState("");
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [running, setRunning] = useState(false);
@@ -64,8 +64,8 @@ export function OpenAIAgent({ active }: { active: boolean }) {
 
   return <div hidden={!active}>
     <div className="moon-agent-notice">
-      <strong>{status?.configured ? `OpenAI · ${status.model}` : 'Настройка OpenAI'}</strong>
-      <span>{connectionError || (status?.configured ? 'Настройки найдены. Доступ к модели проверится при запуске.' : status ? 'Добавь OPENAI_API_KEY и OPENAI_MODEL в .env на сервере. Затем перезапусти сервер агента.' : 'Проверяем сервер агента…')}</span>
+      <strong>{status ? `${status.providerLabel} · ${status.model || 'модель не выбрана'}` : 'Настройка API'}</strong>
+      <span>{connectionError || (status?.configured ? 'Настройки найдены. Доступ к модели проверится при запуске.' : status ? status.setupMessage : 'Проверяем сервер агента…')}</span>
       <button type="button" className="moon-agent-secondary" disabled={running} onClick={() => setRefresh(n => n + 1)}><RefreshCw size={14} /> Обновить статус</button>
     </div>
     <div className="moon-agent-grid moon-agent-live-grid">
@@ -74,13 +74,13 @@ export function OpenAIAgent({ active }: { active: boolean }) {
         <p>Модель сама выбирает действия. Доступен калькулятор: сложение, вычитание, умножение и деление.</p>
         <form onSubmit={e => { e.preventDefault(); void start(); }}>
           <label>Что нужно сделать?<textarea className="moon-agent-goal" rows={5} maxLength={4000} value={goal} onChange={e => setGoal(e.target.value)} disabled={running} required /></label>
-          <button type="submit" className="moon-agent-primary" disabled={running || !status?.configured || !goal.trim()}>Запустить с OpenAI <ArrowRight size={16} /></button>
+          <button type="submit" className="moon-agent-primary" disabled={running || !status?.configured || !goal.trim()}>Запустить{status ? ` с ${status.providerLabel}` : ''} <ArrowRight size={16} /></button>
         </form>
         {running && <button className="moon-agent-secondary" type="button" onClick={() => controller.current?.abort()}><CircleStop size={16} /> Остановить</button>}
         <p className="moon-agent-limits">До 5 обращений к модели · до 90 секунд. Каждый запуск — отдельная задача. Запросы расходуют квоту API твоего проекта.</p>
       </section>
       <section className="moon-agent-log">
-        <h2>Журнал OpenAI</h2>
+        <h2>Журнал агента</h2>
         <p>Реальные события сервера: вызовы, результаты и финальный ответ.</p>
         <div aria-live="polite" aria-busy={running}>
           {!events.length && <div className="moon-agent-empty">После запуска здесь появится ход выполнения.</div>}

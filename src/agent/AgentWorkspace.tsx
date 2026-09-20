@@ -85,7 +85,7 @@ export function AgentWorkspace({ hidden, onToggleSidebar, sidebarOpen, themeCont
         </div>
 
         <div className="moon-mode-switch moon-agent-provider" role="group" aria-label="Источник действий">
-          <button type="button" aria-pressed={provider === "openai"} onClick={() => setProvider("openai")}>OpenAI API</button>
+          <button type="button" aria-pressed={provider === "openai"} onClick={() => setProvider("openai")}>Агент с API</button>
           <button type="button" aria-pressed={provider === "demo"} onClick={() => setProvider("demo")}>Разбор без ключа</button>
         </div>
         <OpenAIAgent active={provider === "openai" && !hidden} />
@@ -131,7 +131,7 @@ export function AgentWorkspace({ hidden, onToggleSidebar, sidebarOpen, themeCont
 
         <section className="moon-agent-next">
           <h2>Как перейти к настоящему агенту?</h2>
-          <p>Выбери «OpenAI API». Сервер передаст задачу и описание калькулятора модели OpenAI. Она выберет действие, получит результат инструмента и решит, что делать дальше.</p>
+          <p>Выбери «Агент с API». Сервер передаст задачу и описание нашего калькулятора модели через Groq или OpenAI. Она выберет действие, получит результат инструмента и решит, что делать дальше.</p>
           <p>Ключ и название модели настраиваются на сервере. Твоя MoonAI остаётся в отдельном режиме чата.</p>
         </section>
         </div>

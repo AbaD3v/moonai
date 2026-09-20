@@ -1515,7 +1515,7 @@ export default function App() {
         </button>
       </div>
 
-      {mode === "agent" && <div className="moon-agent-sidebar"><Bot size={20} /><strong>Лаборатория агента</strong><p>Разбери цикл по шагам: задача, действие, результат, ответ.</p><span>OpenAI API · учебный разбор</span></div>}
+      {mode === "agent" && <div className="moon-agent-sidebar"><Bot size={20} /><strong>Лаборатория агента</strong><p>Разбери цикл по шагам: задача, действие, результат, ответ.</p><span>Groq / OpenAI · учебный разбор</span></div>}
       <div className="moon-sessions" style={mode === "agent" ? { display: "none" } : undefined}>
         <div className="moon-sessions-head">
           <p className="moon-sessions-label">История</p>
