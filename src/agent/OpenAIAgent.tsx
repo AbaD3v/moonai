@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, CircleStop, RefreshCw } from "lucide-react";
 
-type AgentEvent = { type: string; text: string };
-const labels: Record<string, string> = { start: "Запуск", model: "Модель выбирает действие", tool_call: "Вызов инструмента", tool_result: "Результат инструмента", final: "Ответ", error: "Ошибка" };
+type AgentEvent = { type: string; text: string; action_id?: string };
+const labels: Record<string, string> = { start: "Запуск", model: "Модель выбирает действие", tool_call: "Вызов инструмента", tool_result: "Результат инструмента", action_required: "Нужен ответ", final: "Ответ", error: "Ошибка" };
 
 export function OpenAIAgent({ active }: { active: boolean }) {
   const [goal, setGoal] = useState("Рассчитай стоимость 3 билетов по 1200 ₸ и добавь 10% сервисного сбора.");
   const [status, setStatus] = useState<{ configured: boolean; model: string | null; providerLabel: string; setupMessage: string } | null>(null);
   const [connectionError, setConnectionError] = useState("");
   const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [pendingAction, setPendingAction] = useState<AgentEvent | null>(null);
+  const [actionAnswers, setActionAnswers] = useState<Record<string, string>>({});
+  const [actionAnswer, setActionAnswer] = useState("");
+  const [actionError, setActionError] = useState("");
   const [running, setRunning] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const controller = useRef<AbortController | null>(null);
@@ -30,6 +34,10 @@ export function OpenAIAgent({ active }: { active: boolean }) {
     controller.current = request;
     setRunning(true);
     setEvents([]);
+    setPendingAction(null);
+    setActionAnswers({});
+    setActionAnswer("");
+    setActionError("");
     const add = (event: AgentEvent) => setEvents(previous => [...previous, event]);
     try {
       const res = await fetch('/api/agent/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ goal }), signal: request.signal });
@@ -45,8 +53,13 @@ export function OpenAIAgent({ active }: { active: boolean }) {
       const consume = (line: string) => {
         if (!line.trim()) return;
         const event = JSON.parse(line) as AgentEvent;
-        if (typeof event.text !== 'string' || !labels[event.type]) throw new Error('Неверный формат события.');
+        if (typeof event.text !== 'string' || !labels[event.type] || (event.type === 'action_required' && typeof event.action_id !== 'string')) throw new Error('Неверный формат события.');
         if (event.type === 'final' || event.type === 'error') finished = true;
+        if (event.type === 'action_required') {
+          setPendingAction(event);
+          setActionAnswer("");
+          setActionError("");
+        }
         add(event);
       };
       while (true) {
@@ -60,6 +73,18 @@ export function OpenAIAgent({ active }: { active: boolean }) {
     } catch (error) {
       add({ type: 'error', text: request.signal.aborted ? 'Остановлено пользователем.' : error instanceof Error ? error.message : 'Не удалось выполнить задачу.' });
     } finally { controller.current = null; setRunning(false); }
+  }
+
+  async function answerAction(event: AgentEvent) {
+    if (!event.action_id || !actionAnswer.trim()) return;
+    setActionError("");
+    try {
+      const res = await fetch('/api/agent/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action_id: event.action_id, answer: actionAnswer }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Сервер агента: HTTP ${res.status}`);
+      setActionAnswers(previous => ({ ...previous, [event.action_id!]: actionAnswer }));
+      setPendingAction(null);
+    } catch (error) { setActionError(error instanceof Error ? error.message : 'Не удалось отправить ответ.'); }
   }
 
   return <div hidden={!active}>
@@ -84,7 +109,16 @@ export function OpenAIAgent({ active }: { active: boolean }) {
         <p>Реальные события сервера: вызовы, результаты и финальный ответ.</p>
         <div aria-live="polite" aria-busy={running}>
           {!events.length && <div className="moon-agent-empty">После запуска здесь появится ход выполнения.</div>}
-          {events.map((event, i) => <article className="moon-agent-entry" key={i}><h3>{labels[event.type]}</h3><pre>{event.text}</pre></article>)}
+          {events.map((event, i) => <article className="moon-agent-entry" key={i}><h3>{labels[event.type]}</h3><pre>{event.text}</pre>
+            {event.type === 'action_required' && event.action_id && (pendingAction?.action_id === event.action_id || actionAnswers[event.action_id]) && (
+              actionAnswers[event.action_id] ? <pre className="text-emerald-400">Ответ пользователя: {actionAnswers[event.action_id]}</pre> :
+              <form className="mt-3 flex flex-col gap-2" onSubmit={e => { e.preventDefault(); void answerAction(event); }}>
+                <textarea className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-indigo-400" rows={3} value={actionAnswer} onChange={e => setActionAnswer(e.target.value)} placeholder="Введите ответ" disabled={Boolean(actionAnswers[event.action_id])} />
+                <button className="self-start rounded-md bg-indigo-500 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50" type="submit" disabled={!actionAnswer.trim() || Boolean(actionAnswers[event.action_id])}>Ответить</button>
+                {actionError && <p className="text-sm text-red-400" role="alert">{actionError}</p>}
+              </form>
+            )}
+          </article>)}
           {running && <p>Агент выполняет задачу…</p>}
         </div>
       </section>

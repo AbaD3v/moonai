@@ -1,12 +1,12 @@
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
-import { runAgent, openAITransport, groqTransport } from './agent.mjs';
+import { pendingActions, runAgent, openAITransport, groqTransport } from './agent.mjs';
 
 export function providerConfig(env) {
   const provider = env.AGENT_PROVIDER?.trim() || 'groq';
   if (!['groq', 'openai'].includes(provider)) throw new Error('AGENT_PROVIDER должен быть groq или openai.');
   return provider === 'groq'
-    ? { provider, apiKey: env.GROQ_API_KEY?.trim() || '', model: env.GROQ_MODEL?.trim() || 'openai/gpt-oss-20b' }
+    ? { provider, apiKey: env.GROQ_API_KEY?.trim() || '', model: env.GROQ_MODEL?.trim() || 'openai/gpt-oss-120b' }
     : { provider, apiKey: env.OPENAI_API_KEY?.trim() || '', model: env.OPENAI_MODEL?.trim() || '' };
 }
 
@@ -28,6 +28,25 @@ export function createAgentServer({ provider = 'openai', apiKey = '', model = ''
     }
     if (req.method === 'GET' && req.url === '/api/agent/status') {
       return json(200, { configured, model: model || null, provider, providerLabel, setupMessage });
+    }
+    if (req.method === 'POST' && req.url === '/api/agent/answer') {
+      if (!req.headers['content-type']?.startsWith('application/json')) return json(415, { error: 'Нужен JSON.' });
+      let body = '';
+      req.setEncoding('utf8');
+      for await (const chunk of req) {
+        body += chunk.toString();
+        if (Buffer.byteLength(body) > 16_384) return json(413, { error: 'Ответ слишком длинный.' });
+      }
+      let data;
+      try { data = JSON.parse(body); } catch { return json(400, { error: 'Неверный JSON.' }); }
+      if (typeof data.action_id !== 'string' || typeof data.answer !== 'string' || data.answer.length > 4000) {
+        return json(400, { error: 'Нужны action_id и answer.' });
+      }
+      const action = pendingActions.get(data.action_id);
+      if (!action) return json(404, { error: 'Действие не найдено или уже завершено.' });
+      pendingActions.delete(data.action_id);
+      action.resolve({ answer: data.answer });
+      return json(200, { ok: true });
     }
     if (req.method !== 'POST' || req.url !== '/api/agent/run') return json(404, { error: 'Маршрут не найден.' });
     if (!configured) return json(503, { error: setupMessage });
