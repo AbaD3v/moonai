@@ -7,6 +7,8 @@ import {
 } from "lucide-react";
 import moonLogoUrl from "./assets/MoonAILogo.png";
 import moonLogoLightUrl from "./assets/MoonAILogoWhite.png";
+import { AgentWorkspace } from "./agent/AgentWorkspace";
+import "./agent/agent.css";
 
 // ─── SpeechRecognition types ──────────────────────────────────────────────────
 interface ISpeechRecognitionResult {
@@ -1029,6 +1031,7 @@ function getSessionGroupKey(lastActive: number): SessionGroupKey {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
+  const [mode, setMode] = useState<"chat" | "agent">("chat");
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     const saved = loadSessions();
     return saved.length ? saved : [makeSession("default")];
@@ -1183,6 +1186,7 @@ export default function App() {
   }, []);
 
   const newChat = useCallback(() => {
+    setMode("chat");
     const id = Date.now().toString();
     setSessions(prev => [makeSession(id), ...prev]);
     setActiveId(id);
@@ -1502,12 +1506,17 @@ export default function App() {
           </div>
           <span>MoonAI</span>
         </div>
-        <button className="moon-new-chat" onClick={newChat}>
+        <div className="moon-mode-switch" role="group" aria-label="Режим Moon">
+          <button type="button" aria-pressed={mode === "chat"} onClick={() => { setMode("chat"); if (sidebarOverlay) setIsSidebarOpen(false); }}>Moon AI</button>
+          <button type="button" aria-pressed={mode === "agent"} onClick={() => { setMode("agent"); if (sidebarOverlay) setIsSidebarOpen(false); }}>Moon Agent</button>
+        </div>
+        <button className="moon-new-chat" onClick={newChat} style={mode === "agent" ? { display: "none" } : undefined}>
           <Plus size={15} /> Новый чат
         </button>
       </div>
 
-      <div className="moon-sessions">
+      {mode === "agent" && <div className="moon-agent-sidebar"><Bot size={20} /><strong>Лаборатория агента</strong><p>Разбери цикл по шагам: задача, действие, результат, ответ.</p><span>OpenAI API · учебный разбор</span></div>}
+      <div className="moon-sessions" style={mode === "agent" ? { display: "none" } : undefined}>
         <div className="moon-sessions-head">
           <p className="moon-sessions-label">История</p>
           <span>{sessions.length}</span>
@@ -1781,7 +1790,7 @@ export default function App() {
         </AnimatePresence>
 
         {/* MAIN */}
-        <div className="moon-main">
+        <div className="moon-main" style={mode === "agent" ? { display: "none" } : undefined}>
 
           {/* HEADER */}
           <header className="moon-header">
@@ -2056,6 +2065,12 @@ export default function App() {
             </div>
           </footer>
         </div>
+        <AgentWorkspace
+          hidden={mode !== "agent"}
+          onToggleSidebar={() => setIsSidebarOpen(v => !v)}
+          sidebarOpen={isSidebarOpen}
+          themeControl={<ThemeToggle current={theme} onChange={setTheme} />}
+        />
         <ToastViewport toasts={toasts} onDismiss={dismissToast} />
       </div>
     </>

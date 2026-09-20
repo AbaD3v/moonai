@@ -1,0 +1,50 @@
+.moon-mode-switch { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-base); }
+.moon-mode-switch button { flex: 1; padding: 9px 4px; font-size: 12px; border: 0; box-shadow: none; color: var(--text-secondary); background: transparent; border-radius: 7px; }
+.moon-mode-switch button[aria-pressed="true"] { color: var(--text-primary); background: var(--accent-dim); }
+.moon-mode-switch button:focus-visible, .moon-agent button:focus-visible, .moon-agent input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.moon-agent-sidebar { flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 24px 20px; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.moon-agent-sidebar strong { color: var(--text-primary); }
+.moon-agent-sidebar > span { font-size: 11px; }
+.moon-agent-content { overflow-y: auto; min-height: 0; padding: 40px clamp(18px, 4vw, 64px); }
+.moon-agent-intro, .moon-agent-stages, .moon-agent-grid, .moon-agent-next { max-width: 1050px; margin-inline: auto; }
+.moon-agent-label { display: inline-flex; align-items: center; gap: 8px; color: var(--accent); font-size: 11px; letter-spacing: 0.12em; }
+.moon-agent h1 { text-align: left; font-size: clamp(26px, 4vw, 38px); line-height: 1.2; margin: 14px 0; font-weight: 600; }
+.moon-agent h2 { font-size: 16px; font-weight: 600; margin-bottom: 9px; }
+.moon-agent p { font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
+.moon-agent-notice { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 24px; padding: 14px 16px; background: var(--accent-dim); border-radius: 10px; font-size: 12px; line-height: 1.7; }
+.moon-agent-notice span { color: var(--text-secondary); }
+.moon-agent-stages { display: flex; flex-wrap: wrap; gap: 10px 20px; list-style: none; padding: 26px 0; }
+.moon-agent-stages li { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+.moon-agent-stages li > span { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--bg-elevated); }
+.moon-agent-stages .current { color: var(--text-primary); font-weight: 600; }
+.moon-agent-stages .current > span { background: var(--accent-dim); color: var(--accent); outline: 1px solid var(--accent); }
+.moon-agent-stages .complete > span { color: var(--green); }
+.moon-agent-grid { display: grid; grid-template-columns: minmax(230px, 0.8fr) minmax(0, 1.3fr); gap: 24px; align-items: start; }
+.moon-agent-example, .moon-agent-log { padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg-surface); min-width: 0; }
+.moon-agent form { display: grid; gap: 16px; margin-top: 24px; }
+.moon-agent label { display: grid; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+.moon-agent input { min-width: 0; width: 100%; padding: 11px 12px; color: var(--text-primary); background: var(--bg-base); border: 1px solid var(--border); box-shadow: none; }
+.moon-agent input:disabled { opacity: 0.65; }
+.moon-agent-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+.moon-agent-primary, .moon-agent-secondary { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 42px; font-size: 12px; padding: 10px 14px; box-shadow: none; }
+.moon-agent .moon-agent-primary { background: var(--accent-dim); color: var(--text-primary); border: 1px solid var(--accent); }
+.moon-agent .moon-agent-secondary { background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border); }
+.moon-agent-tool { display: flex; gap: 12px; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 12px; }
+.moon-agent-tool > svg { flex-shrink: 0; color: var(--accent); margin-top: 3px; }
+.moon-agent-tool p { margin-top: 4px; font-size: 12px; }
+.moon-agent-empty { padding: 44px 0; font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
+.moon-agent-entry { margin-top: 22px; }
+.moon-agent-entry h3 { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.moon-agent-entry h3 span { color: var(--accent); margin-right: 8px; }
+.moon-agent-entry pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--bg-base); border-radius: 8px; margin-top: 10px; font: 12px/1.7 var(--font-mono); }
+.moon-agent-done { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
+.moon-agent-next { padding: 30px 0 12px; }
+.moon-agent-next p + p { margin-top: 10px; }
+.moon-agent-provider { max-width: 360px; margin: 24px 0; }
+.moon-agent-live-grid { margin-top: 24px; }
+.moon-agent-goal { width: 100%; resize: vertical; min-height: 130px; padding: 12px; background: var(--bg-base); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; font: inherit; line-height: 1.7; }
+.moon-agent-goal:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.moon-agent button:disabled { opacity: 0.5; cursor: not-allowed; }
+.moon-agent-limits { margin-top: 18px; }
+@media (max-width: 960px) { .moon-agent-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 480px) { .moon-agent-content { padding: 24px 16px; } .moon-agent-example, .moon-agent-log { padding: 18px; } }

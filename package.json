@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "agent:dev": "node --env-file-if-exists=.env server/index.mjs",
+    "agent:test": "node --test server/*.test.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
